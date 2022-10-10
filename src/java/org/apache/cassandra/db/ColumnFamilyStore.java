@@ -3637,6 +3637,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
             else
                 overlappingSSTables = getAndReferenceOverlappingLiveSSTables(compacting);
             this.overlapIterator = new OverlapIterator<>(SSTableIntervalTree.buildIntervals(overlappingSSTables));
+
+            if (logger.isTraceEnabled())
+                logger.trace("Refreshed overlaps: {}", overlappingSSTables);
         }
     }
 }
