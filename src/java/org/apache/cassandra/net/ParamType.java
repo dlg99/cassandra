@@ -61,7 +61,7 @@ public enum ParamType
     /**
      * Messages with tracing sessions are decorated with the traced keyspace.
      */
-    TRACE_KEYSPACE      (8, "TraceKeyspace", StringSerializer.serializer);
+    TRACE_KEYSPACE      (8, "TraceKeyspace", StringSerializer.serializer),
 
     CUSTOM_MAP          (14, "CUSTOM",       CustomParamsSerializer.serializer);
 
