@@ -82,9 +82,9 @@ public class SplitterTest
 
         for (int i = 1; i <= (rt - lt); i++)
         {
-            List<Token> splits = splitter.splitOwnedRanges(i, Arrays.asList(new Splitter.WeightedRange(1.0d, range)), false);
-            logger.info("{} splits of {} are: {}", i, range, splits);
-            Assertions.assertThat(splits).hasSize(i);
+            Splitter.SplitResult splits = splitter.splitOwnedRanges(i, Arrays.asList(new Splitter.WeightedRange(1.0d, range)), Splitter.SplitType.ALWAYS_SPLIT);
+            logger.info("{} splits of {} are: {}", i, range, splits.boundaries);
+            Assertions.assertThat(splits.boundaries).hasSize(i);
         }
     }
 
@@ -488,24 +488,6 @@ public class SplitterTest
     public void testPositionInRangeMurmur3Partitioner()
     {
         testPositionInRangeMultiRange(new Murmur3Partitioner());
-    }
-
-    // STAR-1590
-    @Test
-    public void testSplitOwnedRangesForSmallRange() {
-        Splitter splitter = getSplitter(Murmur3Partitioner.instance);
-        long lt = 0;
-        long rt = 31;
-        Range<Token> range = new Range<>(getWrappedToken(Murmur3Partitioner.instance, BigInteger.valueOf(lt)),
-                                         getWrappedToken(Murmur3Partitioner.instance, BigInteger.valueOf(rt)));
-
-        for (int i = 1; i <= (rt - lt); i++)
-        {
-            Splitter.SplitResult splits = splitter.splitOwnedRanges(i, Arrays.asList(new Splitter.WeightedRange(1.0d, range)), Splitter.SplitType.ALWAYS_SPLIT);
-            logger.info("{} splits of {} are: {}", i, range, splits.boundaries);
-            Assertions.assertThat(splits.boundaries).hasSize(i);
-        }
-
     }
 
     private static void testPositionInRangeMultiRange(IPartitioner partitioner)
