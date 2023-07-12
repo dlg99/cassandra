@@ -393,9 +393,12 @@ public class TimeWindowCompactionStrategyTest extends SchemaLoader
             sstables.add(MockSchema.sstableWithTimestamp(i, curr + TimeUnit.MILLISECONDS.convert(i, TimeUnit.MINUTES), cfs));
 
         cfs.addSSTables(sstables);
-        Collection<Collection<SSTableReader>> groups = cfs.getCompactionStrategyManager().getCompactionStrategyFor(sstables.get(0)).groupSSTablesForAntiCompaction(sstables);
+        CompactionStrategyContainer compactionStrategyContainer = cfs.getCompactionStrategyContainer();
+        assert compactionStrategyContainer instanceof CompactionStrategyManager;
+        CompactionStrategyManager compactionStrategyManager = (CompactionStrategyManager) compactionStrategyContainer;
+        Collection<Collection<CompactionSSTable>> groups = compactionStrategyManager.getCompactionStrategyFor(sstables.get(0)).groupSSTablesForAntiCompaction(sstables);
         assertTrue(groups.size() > 0);
-        for (Collection<SSTableReader> group : groups)
+        for (Collection<CompactionSSTable> group : groups)
             assertEquals(1, group.size());
     }
 
