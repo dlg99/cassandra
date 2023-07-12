@@ -677,7 +677,7 @@ public class ImportTest extends CQLTester
                     execute(String.format("INSERT INTO %s.%s (id, d) values (?, ?)", KEYSPACE, table), i, i);
 
                 ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(KEYSPACE, unquotedTableName);
-                cfs.forceBlockingFlush();
+                flush();
 
                 Set<SSTableReader> sstables = cfs.getLiveSSTables();
                 cfs.clearUnsafe();
