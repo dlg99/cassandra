@@ -428,7 +428,7 @@ public class BinLog implements Runnable
             }
             try
             {
-                Throwable sanitationThrowable = cleanEmptyLogFiles(path.toFile(), null);
+                Throwable sanitationThrowable = cleanEmptyLogFiles(new File(path), null);
                 if (sanitationThrowable != null)
                     throw new RuntimeException(format("Unable to clean up %s directory from empty %s files.",
                                                       path.toAbsolutePath(), SingleChronicleQueue.SUFFIX),
@@ -476,14 +476,14 @@ public class BinLog implements Runnable
     private static Throwable cleanEmptyLogFiles(File directory, Throwable accumulate)
     {
         return cleanDirectory(directory, accumulate,
-                              (dir) -> dir.listFiles(file -> {
+                              (dir) -> dir.tryList(file -> {
                                   boolean foundEmptyCq4File = !file.isDirectory()
                                                               && file.length() == 0
-                                                              && file.getName().endsWith(SingleChronicleQueue.SUFFIX);
+                                                              && file.name().endsWith(SingleChronicleQueue.SUFFIX);
 
                                   if (foundEmptyCq4File)
                                       logger.warn("Found empty ChronicleQueue file {}. This file wil be deleted as part of BinLog initialization.",
-                                                  file.getAbsolutePath());
+                                                  file.absolutePath());
 
                                   return foundEmptyCq4File;
                               }));
