@@ -166,7 +166,7 @@ public final class SocketFactory
     }
 
     /** a useful addition for debugging; simply set to true to get more data in your logs */
-    static final boolean WIRETRACE = false;
+    static final boolean WIRETRACE = true;
     static
     {
         if (WIRETRACE)
