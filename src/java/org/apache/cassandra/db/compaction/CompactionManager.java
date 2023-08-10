@@ -249,7 +249,7 @@ public class CompactionManager implements CompactionManagerMBean
     @VisibleForTesting
     public boolean hasOngoingOrPendingTasks()
     {
-        if (!active.getCompactions().isEmpty() || !compactingCF.isEmpty())
+        if (!active.getTableOperations().isEmpty())
             return true;
 
         int pendingTasks = executor.getPendingTaskCount() +
