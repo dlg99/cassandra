@@ -25,10 +25,19 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.collect.Iterators;
 import com.googlecode.concurrenttrees.common.Iterables;
+import org.apache.cassandra.db.commitlog.CommitLogPosition;
+import org.apache.cassandra.db.filter.ColumnFilter;
+import org.apache.cassandra.db.memtable.AbstractAllocatorMemtable;
+import org.apache.cassandra.db.memtable.AbstractMemtable;
 import org.apache.cassandra.db.memtable.Memtable;
+import org.apache.cassandra.db.partitions.Partition;
+import org.apache.cassandra.db.partitions.PartitionUpdate;
+import org.apache.cassandra.index.transactions.UpdateTransaction;
+import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -98,10 +107,8 @@ public class ColumnFamilyStoreTest
     @Test
     public void testMemtableTimestamp() throws Throwable
     {
-        assertEquals(Memtable.NO_MIN_TIMESTAMP,
-                     (new Memtable(Keyspace.open(KEYSPACE1).getColumnFamilyStore(CF_STANDARD1).metadata(),
-                                   EncodingStats.NO_STATS.minTimestamp))
-                     .getMinTimestamp());
+        ColumnFamilyStore cfs = Keyspace.open(KEYSPACE1).getColumnFamilyStore(CF_STANDARD1);
+        assertEquals(AbstractAllocatorMemtable.NO_MIN_TIMESTAMP, fakeMemTableWithMinTS(cfs, EncodingStats.NO_STATS.minTimestamp).getMinTimestamp());
     }
 
     @Test
@@ -568,5 +575,124 @@ public class ColumnFamilyStoreTest
         assertNotNull(ssTableFiles);
         assertEquals(0, ssTableFiles.size());
         cfs.clearUnsafe();
+    }
+
+    private Memtable fakeMemTableWithMinTS(ColumnFamilyStore cfs, long minTS)
+    {
+        return new AbstractMemtable(cfs.metadata, minTS)
+        {
+            @Override
+            public long put(PartitionUpdate update, UpdateTransaction indexer, OpOrder.Group opGroup)
+            {
+                return 0;
+            }
+
+            @Override
+            public Partition getPartition(DecoratedKey key)
+            {
+                return null;
+            }
+
+            @Override
+            public MemtableUnfilteredPartitionIterator makePartitionIterator(ColumnFilter columnFilter, DataRange dataRange)
+            {
+                return null;
+            }
+
+            @Override
+            public long partitionCount()
+            {
+                return 0;
+            }
+
+            @Override
+            public long getLiveDataSize()
+            {
+                return 0;
+            }
+
+            @Override
+            public void addMemoryUsageTo(Memtable.MemoryUsage usage)
+            {
+            }
+
+            @Override
+            public void markExtraOnHeapUsed(long additionalSpace, OpOrder.Group opGroup)
+            {
+            }
+
+            @Override
+            public void markExtraOffHeapUsed(long additionalSpace, OpOrder.Group opGroup)
+            {
+            }
+
+            @Override
+            public Memtable.FlushCollection<?> getFlushSet(PartitionPosition from, PartitionPosition to)
+            {
+                return null;
+            }
+
+            @Override
+            public void switchOut(OpOrder.Barrier writeBarrier, AtomicReference<CommitLogPosition> commitLogUpperBound)
+            {
+            }
+
+            @Override
+            public void discard()
+            {
+            }
+
+            @Override
+            public boolean accepts(OpOrder.Group opGroup, CommitLogPosition commitLogPosition)
+            {
+                return false;
+            }
+
+            @Override
+            public CommitLogPosition getApproximateCommitLogLowerBound()
+            {
+                return null;
+            }
+
+            @Override
+            public CommitLogPosition getCommitLogLowerBound()
+            {
+                return null;
+            }
+
+            @Override
+            public CommitLogPosition getCommitLogUpperBound()
+            {
+                return null;
+            }
+
+            @Override
+            public boolean mayContainDataBefore(CommitLogPosition position)
+            {
+                return false;
+            }
+
+            @Override
+            public boolean isClean()
+            {
+                return false;
+            }
+
+            @Override
+            public boolean shouldSwitch(ColumnFamilyStore.FlushReason reason)
+            {
+                return false;
+            }
+
+            @Override
+            public void metadataUpdated()
+            {
+            }
+
+            @Override
+            public void performSnapshot(String snapshotName)
+            {
+            }
+        };
     }
 }
