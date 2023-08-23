@@ -29,6 +29,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
@@ -57,7 +58,6 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.PathUtils;
 import org.apache.cassandra.metrics.CommitLogMetrics;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.nodes.Nodes;
 import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.security.EncryptionContext;
@@ -251,16 +251,21 @@ public class CommitLog implements CommitLogMBean
     @VisibleForTesting
     public Map<Keyspace, Integer> recoverFiles(ColumnFamilyStore.FlushReason flushReason, File... clogs) throws IOException
     {
-        CommitLogReplayer replayer = CommitLogReplayer.construct(this, Nodes.local().get().getHostId());
+        CommitLogReplayer replayer = CommitLogReplayer.construct(this, getLocalHostId());
         replayer.replayFiles(clogs);
         return replayer.blockForWrites(flushReason);
     }
 
     public void recoverPath(String path, boolean tolerateTruncation) throws IOException
     {
-        CommitLogReplayer replayer = CommitLogReplayer.construct(this, Nodes.local().get().getHostId());
+        CommitLogReplayer replayer = CommitLogReplayer.construct(this, getLocalHostId());
         replayer.replayPath(new File(PathUtils.getPath(path)), tolerateTruncation);
         replayer.blockForWrites(STARTUP);
+    }
+
+    private static UUID getLocalHostId()
+    {
+        return StorageService.instance.getLocalHostUUID();
     }
 
     /**
