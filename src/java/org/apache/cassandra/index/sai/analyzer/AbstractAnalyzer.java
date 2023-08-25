@@ -141,7 +141,9 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
     }
 
     public static boolean isAnalyzed(Map<String, String> options) {
-        return options.containsKey(LuceneAnalyzer.INDEX_ANALYZER) || NonTokenizingOptions.hasNonDefaultOptions(options);
+        return options.containsKey(LuceneAnalyzer.INDEX_ANALYZER)
+               || options.containsKey(LuceneAnalyzer.QUERY_ANALYZER)
+               || NonTokenizingOptions.hasNonDefaultOptions(options);
     }
 
     public static AnalyzerFactory fromOptions(AbstractType<?> type, Map<String, String> options)

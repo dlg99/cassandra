@@ -55,6 +55,94 @@ public class LuceneAnalyzerTest extends SAITester
     }
 
     @Test
+    public void ensureQueryAnalyzerWorksForAnalyzerMatches() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY, val text)");
+
+        // Keyword is the identity analyzer. Lowercase maps to lowercase.
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {" +
+                    "'query_analyzer': '[{\"tokenizer\":\"keyword\"},{\"filter\":\"lowercase\"}]'};");
+
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (id, val) VALUES ('1', 'the test')");
+
+        // This query analyzer is only a lowercasing function, so a term match returns 0 rows
+        assertEquals(0, execute("SELECT * FROM %s WHERE val : 'THE'").size());
+        // The query analzyer lowercases the term, so each result in a match
+        assertEquals(1, execute("SELECT * FROM %s WHERE val : 'THE TEST'").size());
+        assertEquals(1, execute("SELECT * FROM %s WHERE val : 'THE test'").size());
+        assertEquals(1, execute("SELECT * FROM %s WHERE val : 'the test'").size());
+    }
+
+
+    // When only the query analyzer is configured, the query is analyzed (parsed) and then the analyzed result is used
+    // to determine equality based for the indexed column, which itself is not analyzed.
+    @Test
+    public void ensureQueryAnalyzerDoesNotWorkForEquality() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY, val text)");
+
+        // Keyword is the identity analyzer. Lowercase maps to lowercase.
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {" +
+                    "'query_analyzer': '[{\"tokenizer\":\"keyword\"},{\"filter\":\"lowercase\"}]'};");
+
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (id, val) VALUES ('1', 'the test')");
+
+        assertThatThrownBy(() -> execute("SELECT * FROM %s WHERE val = 'THE TEST'"))
+        .isInstanceOf(InvalidRequestException.class)
+        .hasMessage("Column 'val' has an index but does not support the operators specified in the query. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING");
+        assertEquals(0, execute("SELECT * FROM %s WHERE val = 'THE TEST' ALLOW FILTERING").size());
+        assertEquals(1, execute("SELECT * FROM %s WHERE val = 'the test' ALLOW FILTERING").size());
+    }
+
+    // When the index analyzer is configured, equality fails unless ALLOW FILTERING is used.
+    // The index analyzer currently also configures the query analyzer, so this test is to make sure that the query
+    // analyzer does not interfere with the meaning of equality in unexpected ways.
+    @Test
+    public void ensureIndexAnalyzerDoesNotTriggerIncorrectQueryAnalyzerBehavior() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY, val text)");
+
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {" +
+                    "'index_analyzer': '[{\"tokenizer\":\"keyword\"},{\"filter\":\"lowercase\"}]'};");
+
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (id, val) VALUES ('1', 'the test')");
+
+        assertThatThrownBy(() -> execute("SELECT * FROM %s WHERE val = 'THE TEST'"))
+        .isInstanceOf(InvalidRequestException.class)
+        .hasMessage("Column 'val' has an index but does not support the operators specified in the query. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING");
+        assertEquals(0, execute("SELECT * FROM %s WHERE val = 'THE TEST' ALLOW FILTERING").size());
+        assertEquals(1, execute("SELECT * FROM %s WHERE val = 'the test' ALLOW FILTERING").size());
+    }
+
+    // This is effectively the same test as ensureIndexAnalyzerDoesNotTriggerIncorrectQueryAnalyzerBehavior,
+    // but we explicity set the query analyzer here.
+    @Test
+    public void ensureIndexWithQueryAnalyzerDoesNotTriggerIncorrectQueryAnalyzerBehavior() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id text PRIMARY KEY, val text)");
+
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {" +
+                    "'index_analyzer': '[{\"tokenizer\":\"keyword\"},{\"filter\":\"lowercase\"}]'," +
+                    "'query_analyzer': '[{\"tokenizer\":\"keyword\"},{\"filter\":\"lowercase\"}]'};");
+
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (id, val) VALUES ('1', 'the test')");
+
+        assertThatThrownBy(() -> execute("SELECT * FROM %s WHERE val = 'THE TEST'"))
+        .isInstanceOf(InvalidRequestException.class)
+        .hasMessage("Column 'val' has an index but does not support the operators specified in the query. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING");
+        assertEquals(0, execute("SELECT * FROM %s WHERE val = 'THE TEST' ALLOW FILTERING").size());
+        assertEquals(1, execute("SELECT * FROM %s WHERE val = 'the test' ALLOW FILTERING").size());
+    }
+
+    @Test
     public void testStandardAnalyzer() throws Throwable
     {
         createTable("CREATE TABLE %s (id text PRIMARY KEY, val text)");
