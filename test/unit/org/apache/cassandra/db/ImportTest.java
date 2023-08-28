@@ -50,6 +50,7 @@ import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
+import static org.apache.cassandra.db.ColumnFamilyStore.FlushReason.UNIT_TESTS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -676,7 +677,7 @@ public class ImportTest extends CQLTester
                     execute(String.format("INSERT INTO %s.%s (id, d) values (?, ?)", KEYSPACE, table), i, i);
 
                 ColumnFamilyStore cfs = ColumnFamilyStore.getIfExists(KEYSPACE, unquotedTableName);
-                flush();
+                cfs.forceBlockingFlush(UNIT_TESTS);
 
                 Set<SSTableReader> sstables = cfs.getLiveSSTables();
                 cfs.clearUnsafe();
