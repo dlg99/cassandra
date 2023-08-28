@@ -3648,6 +3648,13 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
             return false;
         }
 
+        public void refreshOverlaps()
+        {
+            if (this.overlappingSSTables != null)
+                close();
+            collectOverlaps();
+        }
+        
         private void collectOverlaps()
         {
             if (compacting == null)

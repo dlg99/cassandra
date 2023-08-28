@@ -209,7 +209,7 @@ public class CompactionTask extends AbstractCompactionTask
         {
             // The set of sstables has changed (one or more were excluded due to limited available disk space).
             // We need to recompute the overlaps between sstables.
-            controller.maybeRefreshOverlaps();
+            controller.refreshOverlaps();
         }
 
         // sanity check: all sstables must belong to the same table
