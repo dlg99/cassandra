@@ -426,7 +426,7 @@ public interface Index
      * @param options query options
      * @return comparator that for post-query ordering; or null if not supported
      */
-    default Comparator<List<ByteBuffer>> getPostQueryOrdering(Restriction restriction, int columnIndex, QueryOptions options)
+    default Comparator<List<ByteBuffer>> postQuerySort(Restriction restriction, int columnIndex, QueryOptions options)
     {
         return null;
     }

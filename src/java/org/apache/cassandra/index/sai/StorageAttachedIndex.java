@@ -543,7 +543,7 @@ public class StorageAttachedIndex implements Index
     }
 
     @Override
-    public Comparator<List<ByteBuffer>> getPostQueryOrdering(Restriction restriction, int columnIndex, QueryOptions options)
+    public Comparator<List<ByteBuffer>> postQuerySort(Restriction restriction, int columnIndex, QueryOptions options)
     {
         // For now, only support ANN
         assert restriction instanceof SingleColumnRestriction.AnnRestriction;
@@ -561,7 +561,10 @@ public class StorageAttachedIndex implements Index
 
             float[] right = TypeUtil.decomposeVector(indexContext, rightBuf.get(columnIndex).duplicate());
             double scoreRight = function.compare(right, target);
-            return Double.compare(scoreRight, scoreLeft); // descending order
+
+            Pair<float[], Double> decoratedLeft = Pair.create(left, scoreLeft);
+            Pair<float[], Double> decoratedRight = Pair.create(right, scoreRight);
+            return Double.compare(decoratedRight.right, decoratedLeft.right); // descending order
         };
     }
 
