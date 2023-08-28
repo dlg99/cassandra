@@ -42,7 +42,6 @@ import org.apache.cassandra.guardrails.Guardrails;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.Schema;
-import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.cql3.*;
@@ -114,6 +113,9 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
     private final StatementRestrictions restrictions;
 
     private final boolean isReversed;
+
+    private static int columnIndex;
+    private static SingleRestriction restriction;
 
     /**
      * The <code>AggregationSpecification</code> used to make the aggregates.
@@ -1017,14 +1019,14 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
     /**
      * Orders results when multiple keys are selected (using IN)
      */
-    private void orderResults(ResultSet cqlRows, QueryOptions options)
+    public void orderResults(ResultSet cqlRows, QueryOptions options)
     {
         if (cqlRows.size() == 0 || !needsPostQueryOrdering())
             return;
 
-        Comparator<List<ByteBuffer>> comparator = orderingComparator.prepareFor(table, options);
-        if (comparator != null)
-            Collections.sort(cqlRows.rows, comparator);
+        Index index = restriction.findSupportingIndex(IndexRegistry.obtain(table));
+        assert index != null;
+        index.postQuerySort(restriction, columnIndex, options);
     }
 
     public static class RawStatement extends QualifiedStatement<SelectStatement>
@@ -1495,14 +1497,6 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
         {
             return false;
         }
-
-        /**
-         * Produces a prepared {@link ColumnComparator} for current table and query-options
-         */
-        public Comparator<T> prepareFor(TableMetadata table, QueryOptions options)
-        {
-            return this;
-        }
     }
 
     private static class ReversedColumnComparator<T> extends ColumnComparator<T>
@@ -1556,14 +1550,6 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
         public boolean indexOrdering()
         {
             return true;
-        }
-
-        @Override
-        public Comparator<List<ByteBuffer>> prepareFor(TableMetadata table, QueryOptions options)
-        {
-            Index index = restriction.findSupportingIndex(IndexRegistry.obtain(table));
-            assert index != null;
-            return index.getPostQueryOrdering(restriction, columnIndex, options);
         }
 
         @Override
