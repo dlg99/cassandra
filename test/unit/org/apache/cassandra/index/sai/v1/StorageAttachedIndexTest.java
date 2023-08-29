@@ -130,7 +130,6 @@ public class StorageAttachedIndexTest
     @Test
     public void testOrderResults() {
         ResultSet.ResultMetadata resultMetadata = new ResultSet.ResultMetadata(new ArrayList<>(cfs.metadata.get().columns()));
-        ResultSet resultSet = new ResultSet(resultMetadata);
         QueryOptions queryOptions = QueryOptions.create(ConsistencyLevel.ONE,
                                                         byteBufferList,
                                                         false,
@@ -139,10 +138,9 @@ public class StorageAttachedIndexTest
                                                         null,
                                                         ProtocolVersion.CURRENT,
                                                         KEYSPACE);
-
         List<List<ByteBuffer>> rows = new ArrayList<>();
         rows.add(byteBufferList);
-        resultSet.rows = rows;
+        ResultSet resultSet = new ResultSet(resultMetadata, rows);
 
         SelectStatement selectStatementInstance = (SelectStatement) QueryProcessor.prepareInternal("SELECT key, value FROM " + KEYSPACE + '.' + TABLE).statement;
         selectStatementInstance.orderResults(resultSet, queryOptions);
