@@ -579,8 +579,8 @@ public class UnfilteredSerializer
 
             if (header.isForSSTable())
             {
-                int rowSize = Math.toIntExact(undecoratedInput.readUnsignedVInt());
-                in = new TrackedDataInputPlus(undecoratedInput, rowSize);
+                int rowSize = Math.toIntExact(in.readUnsignedVInt());
+                in = new TrackedDataInputPlus(in, rowSize);
                 in.readUnsignedVInt(); // previous unfiltered size
             }
 
@@ -599,6 +599,7 @@ public class UnfilteredSerializer
             Columns columns = hasAllColumns ? headerColumns : Columns.serializer.deserializeSubset(headerColumns, in);
 
             final LivenessInfo livenessInfo = rowLiveness;
+            final DataInputPlus fin = in;
 
             try
             {
@@ -606,9 +607,9 @@ public class UnfilteredSerializer
                     try
                     {
                         if (column.isSimple())
-                            readSimpleColumn(column, in, header, helper, builder, livenessInfo);
+                            readSimpleColumn(column, fin, header, helper, builder, livenessInfo);
                         else
-                            readComplexColumn(column, in, header, helper, hasComplexDeletion, builder, livenessInfo);
+                            readComplexColumn(column, fin, header, helper, hasComplexDeletion, builder, livenessInfo);
                     }
                     catch (IOException e)
                     {
