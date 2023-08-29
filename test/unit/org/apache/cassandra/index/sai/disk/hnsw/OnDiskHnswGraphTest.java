@@ -84,12 +84,6 @@ public class OnDiskHnswGraphTest extends SAITester
         org.apache.commons.io.FileUtils.deleteQuietly(testDirectory.toFile());
     }
 
-    private FullyConnectedHnswGraph buildGraph(int entryNode, Map<Integer, List<Integer>> nodes) {
-        FullyConnectedHnswGraph.Builder builder = new FullyConnectedHnswGraph.Builder().setEntryNode(entryNode);
-        nodes.forEach(builder::addLevel);
-        return builder.build();
-    }
-
     private void validateGraph(HnswGraph original, OnDiskHnswGraph onDisk) throws IOException {
         try (var view = onDisk.getView(new QueryContext()))
         {
@@ -144,7 +138,7 @@ public class OnDiskHnswGraphTest extends SAITester
 
     private static OnDiskHnswGraph createOnDiskGraph(File outputFile, int cacheRamBudget) throws IOException
     {
-        try (var builder = new FileHandle.Builder(outputFile))
+        try (var builder = new FileHandle.Builder(outputFile).mmapped(true))
         {
             return new OnDiskHnswGraph(builder.complete(), 0, outputFile.length(), cacheRamBudget);
         }
@@ -201,7 +195,7 @@ public class OnDiskHnswGraphTest extends SAITester
         }
         for (var g: graphOffsets)
         {
-            try (var builder = new FileHandle.Builder(outputFile);
+            try (var builder = new FileHandle.Builder(outputFile).mmapped(true);
                  var onDiskGraph = new OnDiskHnswGraph(builder.complete(), g.startOffset, g.endOffset, 0))
             {
                 validateGraph(g.hnsw, onDiskGraph);
@@ -215,7 +209,6 @@ public class OnDiskHnswGraphTest extends SAITester
         File outputFile = new File(testDirectory, "test_graph");
         writeGraph(threeLevelGraph, outputFile);
 
-        var onDiskGraph = createOnDiskGraph(outputFile, 0);
         BiFunction<OnDiskHnswGraph, Integer, Integer> nodeIdBytes = (g, i) -> {
             try (var v = g.getView(new QueryContext()))
             {
@@ -238,35 +231,10 @@ public class OnDiskHnswGraphTest extends SAITester
         };
         BiFunction<OnDiskHnswGraph, Integer, Long> neighborBytes = (g, i) -> g.levelSize(i) - (nodeIdBytes.apply(g, i) + offsetBytes.apply(g, i));
 
-        // test graph that caches just the offsets of the top level
-        int ramBudget = Math.toIntExact(nodeIdBytes.apply(onDiskGraph, 2) + offsetBytes.apply(onDiskGraph, 2));
-        onDiskGraph.close();
-
-        onDiskGraph = createOnDiskGraph(outputFile, ramBudget);
+        // test graph that caches just the offsets of the top levels
+        var onDiskGraph = createOnDiskGraph(outputFile, 0);
         validateGraph(threeLevelGraph, onDiskGraph);
         assertThat(onDiskGraph.cachedLevels[2].containsNeighbors()).isFalse();
-        assertThat(onDiskGraph.cachedLevels[1]).isNull();
-        assertThat(onDiskGraph.getCacheSizeInBytes()).isEqualTo(ramBudget);
-        onDiskGraph.close();
-
-        // test graph that caches just the entire top level
-        ramBudget = Math.toIntExact(nodeIdBytes.apply(onDiskGraph, 2) + neighborBytes.apply(onDiskGraph, 2));
-        onDiskGraph = createOnDiskGraph(outputFile, ramBudget);
-        validateGraph(threeLevelGraph, onDiskGraph);
-        assertThat(onDiskGraph.cachedLevels[2].containsNeighbors()).isTrue();
-        assertThat(onDiskGraph.cachedLevels[1]).isNull();
-        assertThat(onDiskGraph.getCacheSizeInBytes()).isEqualTo(ramBudget);
-
-        // test graph that caches the entire top level, and offsets from the next
-        ramBudget += Math.toIntExact(nodeIdBytes.apply(onDiskGraph, 1) + offsetBytes.apply(onDiskGraph, 1));
-        onDiskGraph.close();
-
-        onDiskGraph = createOnDiskGraph(outputFile, ramBudget);
-        validateGraph(threeLevelGraph, onDiskGraph);
-        assertThat(onDiskGraph.cachedLevels[2].containsNeighbors()).isTrue();
-        assertThat(onDiskGraph.cachedLevels[1].containsNeighbors()).isFalse();
-        assertThat(onDiskGraph.cachedLevels[0]).isNull();
-        assertThat(onDiskGraph.getCacheSizeInBytes()).isEqualTo(ramBudget);
         onDiskGraph.close();
 
         // test graph that caches the entire structure

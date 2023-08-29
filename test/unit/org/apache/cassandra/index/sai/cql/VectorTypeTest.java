@@ -18,25 +18,40 @@
 
 package org.apache.cassandra.index.sai.cql;
 
-import org.junit.Assert;
-import org.junit.Before;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.db.marshal.Int32Type;
+import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.InvalidRequestException;
-import org.apache.cassandra.index.sai.SAITester;
-import org.apache.cassandra.inject.ActionBuilder;
-import org.apache.cassandra.inject.Expression;
-import org.apache.cassandra.inject.Injection;
-import org.apache.cassandra.inject.Injections;
-import org.apache.cassandra.inject.InvokePointBuilder;
+import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.tracing.Tracing;
+import org.apache.cassandra.tracing.TracingTestImpl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class VectorTypeTest extends VectorTester
 {
+    private static final IPartitioner partitioner = Murmur3Partitioner.instance;
+
+    @BeforeClass
+    public static void setupClass()
+    {
+        System.setProperty("cassandra.custom_tracing_class", "org.apache.cassandra.tracing.TracingTestImpl");
+    }
+    
     @Test
     public void endToEndTest() throws Throwable
     {
@@ -51,12 +66,10 @@ public class VectorTypeTest extends VectorTester
 
         UntypedResultSet result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
 
         flush();
         result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
 
         execute("INSERT INTO %s (pk, str_val, val) VALUES (4, 'E', [5.0, 2.0, 3.0])");
         execute("INSERT INTO %s (pk, str_val, val) VALUES (5, 'F', [6.0, 3.0, 4.0])");
@@ -80,6 +93,48 @@ public class VectorTypeTest extends VectorTester
         result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 2");
         assertContainsInt(result, "pk", 1);
         assertContainsInt(result, "pk", 2);
+    }
+
+    @Test
+    public void tracingTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, str_val text, val vector<float, 3>, PRIMARY KEY(pk))");
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (0, 'A', [1.0, 2.0, 3.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (1, 'B', [2.0, 3.0, 4.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (2, 'C', [3.0, 4.0, 5.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (3, 'D', [4.0, 5.0, 6.0])");
+
+        flush();
+
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (4, 'E', [5.0, 2.0, 3.0])");
+
+        Tracing.instance.newSession(ClientState.forInternalCalls(), Tracing.TraceType.QUERY);
+        execute("SELECT * FROM %s ORDER BY val ann of [9.5, 5.5, 6.5] LIMIT 5");
+        for (String trace : ((TracingTestImpl) Tracing.instance).getTraces())
+            assertThat(trace).doesNotContain("Executing single-partition query");
+        // manual inspection to verify that no extra traces were included
+        logger.info(((TracingTestImpl) Tracing.instance).getTraces().toString());
+    }
+
+    @Test
+    public void createIndexAfterInsertTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, str_val text, val vector<float, 3>, PRIMARY KEY(pk))");
+
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (0, 'A', [1.0, 2.0, 3.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (1, 'B', [2.0, 3.0, 4.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (2, 'C', [3.0, 4.0, 5.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (3, 'D', [4.0, 5.0, 6.0])");
+
+        flush();
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        UntypedResultSet result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
+        assertThat(result).hasSize(3);
     }
 
     public static void assertContainsInt(UntypedResultSet result, String columnName, int columnValue)
@@ -112,7 +167,29 @@ public class VectorTypeTest extends VectorTester
 
         // the vector given is closest to row 2, but we exclude that row because b=false
         var result = execute("SELECT * FROM %s WHERE b=true ORDER BY v ANN OF [3.1, 4.1, 5.1] LIMIT 2");
-        // TODO assert specific row keys
+        // VSTODO assert specific row keys
+        assertThat(result).hasSize(2);
+
+        flush();
+        compact();
+
+        result = execute("SELECT * FROM %s WHERE b=true ORDER BY v ANN OF [3.1, 4.1, 5.1] LIMIT 2");
+        assertThat(result).hasSize(2);
+    }
+
+    @Test
+    public void testTwoPredicatesManyRows() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, b boolean, v vector<float, 3>, PRIMARY KEY(pk))");
+        createIndex("CREATE CUSTOM INDEX ON %s(b) USING 'StorageAttachedIndex'");
+        createIndex("CREATE CUSTOM INDEX ON %s(v) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        for (int i = 0; i < 100; i++)
+            execute("INSERT INTO %s (pk, b, v) VALUES (?, true, ?)",
+                    i, vector((float) i, (float) (i + 1), (float) (i + 2)));
+
+        var result = execute("SELECT * FROM %s WHERE b=true ORDER BY v ANN OF [3.1, 4.1, 5.1] LIMIT 2");
         assertThat(result).hasSize(2);
 
         flush();
@@ -137,7 +214,7 @@ public class VectorTypeTest extends VectorTester
 
         // the vector given is closest to row 2, but we exclude that row because b=false and str!='B'
         var result = execute("SELECT * FROM %s WHERE b=true AND str='B' ORDER BY v ANN OF [3.1, 4.1, 5.1] LIMIT 2");
-        // TODO assert specific row keys
+        // VSTODO assert specific row keys
         assertThat(result).hasSize(1);
 
         flush();
@@ -166,7 +243,6 @@ public class VectorTypeTest extends VectorTester
 
         result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
     }
 
     @Test
@@ -230,8 +306,18 @@ public class VectorTypeTest extends VectorTester
     public void changingOptionsTest() throws Throwable
     {
         createTable("CREATE TABLE %s (pk int, str_val text, val vector<float, 3>, PRIMARY KEY(pk))");
-        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = " +
-                    "{'maximum_node_connections' : 10, 'construction_beam_width' : 200, 'similarity_function' : 'euclidean' }");
+        if (CassandraRelevantProperties.SAI_HNSW_ALLOW_CUSTOM_PARAMETERS.getBoolean())
+        {
+            createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = " +
+                        "{'maximum_node_connections' : 10, 'construction_beam_width' : 200, 'similarity_function' : 'euclidean' }");
+        }
+        else
+        {
+            assertThatThrownBy(() -> createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = " +
+                                                 "{'maximum_node_connections' : 10, 'construction_beam_width' : 200, 'similarity_function' : 'euclidean' }"))
+            .isInstanceOf(InvalidRequestException.class);
+            return;
+        }
         waitForIndexQueryable();
 
         execute("INSERT INTO %s (pk, str_val, val) VALUES (0, 'A', [1.0, 2.0, 3.0])");
@@ -241,12 +327,10 @@ public class VectorTypeTest extends VectorTester
 
         UntypedResultSet result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
 
         flush();
         result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 3");
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
 
         execute("INSERT INTO %s (pk, str_val, val) VALUES (4, 'E', [5.0, 2.0, 3.0])");
         execute("INSERT INTO %s (pk, str_val, val) VALUES (5, 'F', [6.0, 3.0, 4.0])");
@@ -258,7 +342,6 @@ public class VectorTypeTest extends VectorTester
 
         result = execute("SELECT * FROM %s ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 5");
         assertThat(result).hasSize(5);
-        System.out.println(makeRowStrings(result));
     }
 
     @Test
@@ -275,7 +358,6 @@ public class VectorTypeTest extends VectorTester
 
         UntypedResultSet result = execute("SELECT * FROM %s ORDER BY val ann of ? LIMIT 3", vector(2.5f, 3.5f, 4.5f));
         assertThat(result).hasSize(3);
-        System.out.println(makeRowStrings(result));
     }
 
     @Test
@@ -296,12 +378,10 @@ public class VectorTypeTest extends VectorTester
 
         UntypedResultSet result = execute("SELECT * FROM %s WHERE str_val = 'B' ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 2");
         assertThat(result).hasSize(2);
-        System.out.println(makeRowStrings(result));
 
         flush();
         result = execute("SELECT * FROM %s WHERE str_val = 'B' ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 2");
         assertThat(result).hasSize(2);
-        System.out.println(makeRowStrings(result));
     }
 
     @Test
@@ -334,6 +414,196 @@ public class VectorTypeTest extends VectorTester
     }
 
     @Test
+    public void lwtTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (p int, c int, v text, vec vector<float, 2>, PRIMARY KEY(p, c))");
+        createIndex("CREATE CUSTOM INDEX ON %s(vec) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (p, c, v) VALUES (?, ?, ?)", 0, 0, "test");
+        execute("INSERT INTO %s (p, c, v) VALUES (?, ?, ?)", 0, 1, "00112233445566");
+
+        execute("UPDATE %s SET v='00112233', vec=[0.9, 0.7] WHERE p = 0 AND c = 0 IF v = 'test'");
+
+        UntypedResultSet result = execute("SELECT * FROM %s ORDER BY vec ANN OF [0.1, 0.9] LIMIT 100");
+
+        assertThat(result).hasSize(1);
+    }
+
+    @Test
+    public void twoVectorFieldsTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, v2 vector<float, 2>, v3 vector<float, 3>, PRIMARY KEY(pk))");
+        createIndex("CREATE CUSTOM INDEX ON %s(v2) USING 'StorageAttachedIndex'");
+        createIndex("CREATE CUSTOM INDEX ON %s(v3) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+    }
+
+    @Test
+    public void primaryKeySearchTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, val vector<float, 3>, i int, PRIMARY KEY(pk))");
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        var N = 5;
+        for (int i = 0; i < N; i++)
+            execute("INSERT INTO %s (pk, val) VALUES (?, ?)", i, vector(1.0f + i, 2.0f + i, 3.0f + i));
+
+        for (int i = 0; i < N; i++)
+        {
+            UntypedResultSet result = execute("SELECT pk FROM %s WHERE pk = ? ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 2", i);
+            assertThat(result).hasSize(1);
+            assertRows(result, row(i));
+        }
+
+        flush();
+        for (int i = 0; i < N; i++)
+        {
+            UntypedResultSet result = execute("SELECT pk FROM %s WHERE pk = ? ORDER BY val ann of [2.5, 3.5, 4.5] LIMIT 2", i);
+            assertThat(result).hasSize(1);
+            assertRows(result, row(i));
+        }
+    }
+
+    @Test
+    public void partitionKeySearchTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (partition int, row int, val vector<float, 2>, PRIMARY KEY(partition, row))");
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {'similarity_function' : 'euclidean'}");
+        waitForIndexQueryable();
+
+        var nPartitions = 5;
+        var rowsPerPartition = 10;
+        Map<Integer, List<float[]>> vectorsByPartition = new HashMap<>();
+
+        for (int i = 1; i <= nPartitions; i++)
+        {
+            for (int j = 1; j <= rowsPerPartition; j++)
+            {
+                logger.debug("Inserting partition {} row {}: [{}, {}]", i, j, i, j);
+                execute("INSERT INTO %s (partition, row, val) VALUES (?, ?, ?)", i, j, vector((float) i, (float) j));
+                float[] vector = {(float) i, (float) j};
+                vectorsByPartition.computeIfAbsent(i, k -> new ArrayList<>()).add(vector);
+            }
+        }
+
+        var queryVector = vector(new float[] { 1.5f, 1.5f });
+        for (int i = 1; i <= nPartitions; i++)
+        {
+            UntypedResultSet result = execute("SELECT partition, row FROM %s WHERE partition = ? ORDER BY val ann of ? LIMIT 2", i, queryVector);
+            assertThat(result).hasSize(2);
+            assertRowsIgnoringOrder(result,
+                                    row(i, 1),
+                                    row(i, 2));
+        }
+
+        flush();
+        for (int i = 1; i <= nPartitions; i++)
+        {
+            UntypedResultSet result = execute("SELECT partition, row FROM %s WHERE partition = ? ORDER BY val ann of ? LIMIT 2", i, queryVector);
+            assertThat(result).hasSize(2);
+            assertRowsIgnoringOrder(result,
+                                    row(i, 1),
+                                    row(i, 2));
+        }
+    }
+
+    @Test
+    public void rangeSearchTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (partition int, val vector<float, 2>, PRIMARY KEY(partition))");
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {'similarity_function' : 'euclidean'}");
+        waitForIndexQueryable();
+
+        var nPartitions = 100;
+        Map<Integer, float[]> vectorsByKey = new HashMap<>();
+
+        for (int i = 1; i <= nPartitions; i++)
+        {
+            float[] vector = {(float) i, (float) i};
+            execute("INSERT INTO %s (partition, val) VALUES (?, ?)", i, vector(vector));
+            vectorsByKey.put(i, vector);
+        }
+
+        var queryVector = vector(new float[] { 1.5f, 1.5f });
+        CheckedFunction tester = () -> {
+            for (int i = 1; i <= nPartitions; i++)
+            {
+                UntypedResultSet result = execute("SELECT partition FROM %s WHERE token(partition) > token(?) ORDER BY val ann of ? LIMIT 1000", i, queryVector);
+                assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysWithLowerBound(vectorsByKey.keySet(), i, false));
+
+                result = execute("SELECT partition FROM %s WHERE token(partition) >= token(?) ORDER BY val ann of ? LIMIT 1000", i, queryVector);
+                assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysWithLowerBound(vectorsByKey.keySet(), i, true));
+
+                result = execute("SELECT partition FROM %s WHERE token(partition) < token(?) ORDER BY val ann of ? LIMIT 1000", i, queryVector);
+                assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysWithUpperBound(vectorsByKey.keySet(), i, false));
+
+                result = execute("SELECT partition FROM %s WHERE token(partition) <= token(?) ORDER BY val ann of ? LIMIT 1000", i, queryVector);
+                assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysWithUpperBound(vectorsByKey.keySet(), i, true));
+
+                for (int j = 1; j <= nPartitions; j++)
+                {
+                    result = execute("SELECT partition FROM %s WHERE token(partition) >= token(?) AND token(partition) <= token(?) ORDER BY val ann of ? LIMIT 1000", i, j, queryVector);
+                    assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysInBounds(vectorsByKey.keySet(), i, true, j, true));
+
+                    result = execute("SELECT partition FROM %s WHERE token(partition) > token(?) AND token(partition) <= token(?) ORDER BY val ann of ? LIMIT 1000", i, j, queryVector);
+                    assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysInBounds(vectorsByKey.keySet(), i, false, j, true));
+
+                    result = execute("SELECT partition FROM %s WHERE token(partition) >= token(?) AND token(partition) < token(?) ORDER BY val ann of ? LIMIT 1000", i, j, queryVector);
+                    assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysInBounds(vectorsByKey.keySet(), i, true, j, false));
+
+                    result = execute("SELECT partition FROM %s WHERE token(partition) > token(?) AND token(partition) < token(?) ORDER BY val ann of ? LIMIT 1000", i, j, queryVector);
+                    assertThat(keys(result)).containsExactlyInAnyOrderElementsOf(keysInBounds(vectorsByKey.keySet(), i, false, j, false));
+                }
+            }
+        };
+
+        tester.apply();
+
+        flush();
+
+        tester.apply();
+    }
+
+    private Collection<Integer> keys(UntypedResultSet result)
+    {
+        List<Integer> keys = new ArrayList<>(result.size());
+        for (UntypedResultSet.Row row : result)
+            keys.add(row.getInt("partition"));
+        return keys;
+    }
+
+    private Collection<Integer> keysWithLowerBound(Collection<Integer> keys, int leftKey, boolean leftInclusive)
+    {
+        return keysInTokenRange(keys, partitioner.getToken(Int32Type.instance.decompose(leftKey)), leftInclusive,
+                                partitioner.getMaximumToken().getToken(), true);
+    }
+
+    private Collection<Integer> keysWithUpperBound(Collection<Integer> keys, int rightKey, boolean rightInclusive)
+    {
+        return keysInTokenRange(keys, partitioner.getMinimumToken().getToken(), true,
+                                partitioner.getToken(Int32Type.instance.decompose(rightKey)), rightInclusive);
+    }
+
+    private Collection<Integer> keysInBounds(Collection<Integer> keys, int leftKey, boolean leftInclusive, int rightKey, boolean rightInclusive)
+    {
+        return keysInTokenRange(keys, partitioner.getToken(Int32Type.instance.decompose(leftKey)), leftInclusive,
+                                partitioner.getToken(Int32Type.instance.decompose(rightKey)), rightInclusive);
+    }
+
+    private Collection<Integer> keysInTokenRange(Collection<Integer> keys, Token leftToken, boolean leftInclusive, Token rightToken, boolean rightInclusive)
+    {
+        long left = leftToken.getLongValue();
+        long right = rightToken.getLongValue();
+        return keys.stream()
+               .filter(k -> {
+                   long t = partitioner.getToken(Int32Type.instance.decompose(k)).getLongValue();
+                   return (left < t || left == t && leftInclusive) && (t < right || t == right && rightInclusive);
+               }).collect(Collectors.toSet());
+    }
+
+    @Test
     public void selectFloatVectorFunctions() throws Throwable
     {
         createTable(KEYSPACE, "CREATE TABLE %s (pk int primary key, value vector<float, 2>)");
@@ -356,6 +626,27 @@ public class VectorTypeTest extends VectorTester
         execute("SELECT similarity_cosine((vector<float, 2>) ?, ?) FROM %s WHERE pk=0", q, q);
         execute("SELECT similarity_cosine(?, (vector<float, 2>) ?) FROM %s WHERE pk=0", q, q);
         execute("SELECT similarity_cosine((vector<float, 2>) ?, (vector<float, 2>) ?) FROM %s WHERE pk=0", q, q);
+    }
+
+    @Test
+    public void selectSimilarityWithAnn() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, str_val text, val vector<float, 3>, PRIMARY KEY(pk))");
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (0, 'A', [1.0, 2.0, 3.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (1, 'B', [2.0, 3.0, 4.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (2, 'C', [3.0, 4.0, 5.0])");
+        execute("INSERT INTO %s (pk, str_val, val) VALUES (3, 'D', [4.0, 5.0, 6.0])");
+
+        Vector<Float> q = vector(1.5f, 2.5f, 3.5f);
+        var result = execute("SELECT str_val, similarity_cosine(val, ?) FROM %s ORDER BY val ANN OF ? LIMIT 2",
+                q, q);
+
+        assertRowsIgnoringOrder(result,
+                row("A", 0.9987074f),
+                row("B", 0.9993764f));
     }
 
     @Test
@@ -405,14 +696,5 @@ public class VectorTypeTest extends VectorTester
                              "SELECT similarity_cosine([1, 2, 3], value) FROM %s WHERE pk=0");
         assertInvalidMessage("Required 2 elements, but saw 3",
                              "SELECT similarity_cosine([1, 2], [3, 4, 5]) FROM %s WHERE pk=0");
-    }
-
-
-    @Test
-    public void testInvalidColumnNameWithAnn() throws Throwable
-    {
-        String table = createTable(KEYSPACE, "CREATE TABLE %s (k int, c int, v int, primary key (k, c))");
-        assertInvalidMessage(String.format("Undefined column name bad_col in table %s", KEYSPACE + "." + table),
-                             "SELECT k from %s ORDER BY bad_col ANN OF [1.0] LIMIT 1");
     }
 }

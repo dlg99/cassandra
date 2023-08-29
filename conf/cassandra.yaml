@@ -1380,12 +1380,6 @@ repaired_data_tracking_for_partition_reads_enabled: false
 # mismatches are less actionable than confirmed ones.
 report_unconfirmed_repaired_data_mismatches: false
 
-# Having many tables and/or keyspaces negatively affects performance of many operations in the
-# cluster. When the number of tables/keyspaces in the cluster exceeds the following thresholds
-# a client warning will be sent back to the user when creating a table or keyspace.
-# table_count_warn_threshold: 150
-# keyspace_count_warn_threshold: 40
-
 # This is the page size used internally by aggregation queries. It aims to limit the memory used by aggregation
 # queries when there is a lot of data to aggregate.
 # aggregation_subpage_size_in_kb: 2048
@@ -1467,6 +1461,12 @@ enable_drop_compact_storage: false
   # Failure threshold to prevent creating more fields in user-defined-type than threshold.
   # Default -1 to disable, may differ if emulate_dbaas_defaults is enabled
   # fields_per_udt_failure_threshold: -1
+
+  # Guardrail to warn or fail when creating a vector column with more dimensions than threshold.
+  # Default vector_dimensions_warn_threshold is -1 to disable, may differ if emulate_dbaas_defaults is enabled
+  # Default vector_dimensions_failure_threshold is 8192, may differ if emulate_dbaas_defaults is enabled
+  # vector_dimensions_warn_threshold: -1
+  # vector_dimensions_failure_threshold: 8192
 
   # Warning threshold to warn when encountering larger size of collection data than threshold.
   # Default -1 to disable, may differ if emulate_dbaas_defaults is enabled

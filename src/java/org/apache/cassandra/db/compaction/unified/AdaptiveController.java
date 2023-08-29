@@ -16,6 +16,7 @@
 
 package org.apache.cassandra.db.compaction.unified;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -26,10 +27,18 @@ import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.db.compaction.CompactionPick;
 import org.apache.cassandra.db.compaction.UnifiedCompactionStrategy;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.io.util.FileReader;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.MonotonicClock;
+import org.apache.cassandra.utils.Overlaps;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 /**
  * The adaptive compaction controller dynamically calculates the optimal scaling parameter W.
@@ -48,8 +57,7 @@ public class AdaptiveController extends Controller
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveController.class);
 
     /** The starting value for the scaling parameter */
-    static final String STARTING_SCALING_PARAMETER = "adaptive_starting_scaling_parameter";
-    private static final int DEFAULT_STARTING_SCALING_PARAMETER = Integer.getInteger(PREFIX + STARTING_SCALING_PARAMETER, 0);
+    private static final int DEFAULT_STARTING_SCALING_PARAMETER = 0;
 
     /** The minimum valid value for the scaling parameter */
     static final String MIN_SCALING_PARAMETER = "adaptive_min_scaling_parameter";
@@ -75,7 +83,6 @@ public class AdaptiveController extends Controller
     /** The maximum number of concurrent Adaptive Compactions */
     static final String MAX_ADAPTIVE_COMPACTIONS = "max_adaptive_compactions";
     private static final int DEFAULT_MAX_ADAPTIVE_COMPACTIONS = Integer.getInteger(PREFIX + MAX_ADAPTIVE_COMPACTIONS, 5);
-
     private final int intervalSec;
     private final int minScalingParameter;
     private final int maxScalingParameter;
@@ -93,39 +100,45 @@ public class AdaptiveController extends Controller
                               int[] scalingParameters,
                               int[] previousScalingParameters,
                               double[] survivalFactors,
-                              long dataSetSizeMB,
-                              int numShards,
-                              long minSstableSizeMB,
-                              long flushSizeOverrideMB,
+                              long dataSetSize,
+                              long minSSTableSize,
+                              long flushSizeOverride,
+                              long currentFlushSize,
                               double maxSpaceOverhead,
                               int maxSSTablesToCompact,
                               long expiredSSTableCheckFrequency,
                               boolean ignoreOverlapsInExpirationCheck,
-                              boolean l0ShardsEnabled,
                               int baseShardCount,
-                              double targetSStableSize,
-                              OverlapInclusionMethod overlapInclusionMethod,
+                              long targetSStableSize,
+                              double sstableGrowthModifier,
+                              int reservedThreadsPerLevel,
+                              Reservations.Type reservationsType,
+                              Overlaps.InclusionMethod overlapInclusionMethod,
                               int intervalSec,
                               int minScalingParameter,
                               int maxScalingParameter,
                               double threshold,
                               int minCost,
-                              int maxAdaptiveCompactions)
+                              int maxAdaptiveCompactions,
+                              String keyspaceName,
+                              String tableName)
     {
         super(clock,
               env,
               survivalFactors,
-              dataSetSizeMB,
-              numShards,
-              minSstableSizeMB,
-              flushSizeOverrideMB,
+              dataSetSize,
+              minSSTableSize,
+              flushSizeOverride,
+              currentFlushSize,
               maxSpaceOverhead,
               maxSSTablesToCompact,
               expiredSSTableCheckFrequency,
               ignoreOverlapsInExpirationCheck,
-              l0ShardsEnabled,
               baseShardCount,
               targetSStableSize,
+              sstableGrowthModifier,
+              reservedThreadsPerLevel,
+              reservationsType,
               overlapInclusionMethod);
 
         this.scalingParameters = scalingParameters;
@@ -136,30 +149,96 @@ public class AdaptiveController extends Controller
         this.threshold = threshold;
         this.minCost = minCost;
         this.maxAdaptiveCompactions = maxAdaptiveCompactions;
+        this.keyspaceName = keyspaceName;
+        this.tableName = tableName;
     }
 
     static Controller fromOptions(Environment env,
                                   double[] survivalFactors,
-                                  long dataSetSizeMB,
-                                  int numShards,
-                                  long minSstableSizeMB,
-                                  long flushSizeOverrideMB,
+                                  long dataSetSize,
+                                  long minSSTableSize,
+                                  long flushSizeOverride,
                                   double maxSpaceOverhead,
                                   int maxSSTablesToCompact,
                                   long expiredSSTableCheckFrequency,
                                   boolean ignoreOverlapsInExpirationCheck,
-                                  boolean l0ShardsEnabled,
                                   int baseShardCount,
-                                  double targetSSTableSize,
-                                  OverlapInclusionMethod overlapInclusionMethod,
+                                  long targetSSTableSize,
+                                  double sstableGrowthModifier,
+                                  int reservedThreadsPerLevel,
+                                  Reservations.Type reservationsType,
+                                  Overlaps.InclusionMethod overlapInclusionMethod,
+                                  String keyspaceName,
+                                  String tableName,
                                   Map<String, String> options)
     {
-        int scalingParameter = options.containsKey(STARTING_SCALING_PARAMETER) ? Integer.parseInt(options.get(STARTING_SCALING_PARAMETER)) : DEFAULT_STARTING_SCALING_PARAMETER;
-        int[] scalingParameters = new int[32];
-        int[] previousScalingParameters = new int[32];
-        //set the scaling parameter for each level to the starting scaling parameter or default scaling parameter
-        Arrays.fill(scalingParameters, scalingParameter);
-        Arrays.fill(previousScalingParameters, scalingParameter);
+        int[] scalingParameters = null;
+        long currentFlushSize = flushSizeOverride;
+
+        File f = getControllerConfigPath(keyspaceName, tableName);
+        try
+        {
+            JSONParser jsonParser = new JSONParser();
+            JSONObject jsonObject = (JSONObject) jsonParser.parse(new FileReader(f));
+            scalingParameters = readStoredScalingParameters((JSONArray) jsonObject.get("scaling_parameters"));
+            if (jsonObject.get("current_flush_size") != null && flushSizeOverride == 0)
+            {
+                currentFlushSize = (long) jsonObject.get("current_flush_size");
+                logger.debug("Successfully read stored current_flush_size from disk");
+            }
+        }
+        catch (IOException e)
+        {
+            logger.debug("No controller config file found. Using starting value instead.");
+        }
+        catch (ParseException e)
+        {
+            logger.warn("Unable to parse saved options. Using starting value instead:", e);
+        }
+
+        if (scalingParameters == null)
+        {
+            logger.info("Unable to read scaling_parameters. Using starting value instead.");
+            scalingParameters = new int[UnifiedCompactionStrategy.MAX_LEVELS];
+            String staticScalingParameters = options.remove(SCALING_PARAMETERS_OPTION);
+            String staticScalingFactors = options.remove(STATIC_SCALING_FACTORS_OPTION);
+
+            if (staticScalingParameters != null)
+            {
+                int[] parameters = parseScalingParameters(staticScalingParameters);
+                for (int i = 0; i < scalingParameters.length; i++)
+                {
+                    if (i < parameters.length)
+                        scalingParameters[i] = parameters[i];
+                    else
+                        scalingParameters[i] = scalingParameters[i-1];
+                }
+            }
+            else if (staticScalingFactors != null)
+            {
+                int[] factors = parseScalingParameters(staticScalingFactors);
+                for (int i = 0; i < scalingParameters.length; i++)
+                {
+                    if (i < factors.length)
+                        scalingParameters[i] = factors[i];
+                    else
+                        scalingParameters[i] = scalingParameters[i-1];
+                }
+                logger.info("Option: '{}' used to initialize scaling parameters for Adaptive Controller", STATIC_SCALING_FACTORS_OPTION);
+            }
+            else
+                Arrays.fill(scalingParameters, DEFAULT_STARTING_SCALING_PARAMETER);
+        }
+        else
+        {
+            logger.debug("Successfully read stored scaling parameters from disk.");
+            if (options.containsKey(SCALING_PARAMETERS_OPTION))
+                logger.warn("Option: '{}' is defined but not used.  Stored configuration was used instead", SCALING_PARAMETERS_OPTION);
+            if (options.containsKey(STATIC_SCALING_FACTORS_OPTION))
+                logger.warn("Option: '{}' is defined but not used.  Stored configuration was used instead", STATIC_SCALING_FACTORS_OPTION);
+        }
+        int[] previousScalingParameters = scalingParameters.clone();
+
         int minScalingParameter = options.containsKey(MIN_SCALING_PARAMETER) ? Integer.parseInt(options.get(MIN_SCALING_PARAMETER)) : DEFAULT_MIN_SCALING_PARAMETER;
         int maxScalingParameter = options.containsKey(MAX_SCALING_PARAMETER) ? Integer.parseInt(options.get(MAX_SCALING_PARAMETER)) : DEFAULT_MAX_SCALING_PARAMETER;
         int intervalSec = options.containsKey(INTERVAL_SEC) ? Integer.parseInt(options.get(INTERVAL_SEC)) : DEFAULT_INTERVAL_SEC;
@@ -169,24 +248,53 @@ public class AdaptiveController extends Controller
 
         return new AdaptiveController(MonotonicClock.preciseTime,
                                       env,
-                                      scalingParameters, previousScalingParameters,
+                                      scalingParameters,
+                                      previousScalingParameters,
                                       survivalFactors,
-                                      dataSetSizeMB,
-                                      numShards,
-                                      minSstableSizeMB,
-                                      flushSizeOverrideMB,
+                                      dataSetSize,
+                                      minSSTableSize,
+                                      flushSizeOverride,
+                                      currentFlushSize,
                                       maxSpaceOverhead,
                                       maxSSTablesToCompact,
                                       expiredSSTableCheckFrequency,
                                       ignoreOverlapsInExpirationCheck,
-                                      l0ShardsEnabled,
                                       baseShardCount,
                                       targetSSTableSize,
+                                      sstableGrowthModifier,
+                                      reservedThreadsPerLevel,
+                                      reservationsType,
                                       overlapInclusionMethod,
                                       intervalSec,
-                                      minScalingParameter, maxScalingParameter,
+                                      minScalingParameter,
+                                      maxScalingParameter,
                                       threshold,
-                                      minCost, maxAdaptiveCompactions);
+                                      minCost,
+                                      maxAdaptiveCompactions,
+                                      keyspaceName,
+                                      tableName);
+    }
+
+    private static int[] readStoredScalingParameters(JSONArray storedScalingParameters)
+    {
+        if (storedScalingParameters.size() > 0)
+        {
+            int[] scalingParameters = new int[UnifiedCompactionStrategy.MAX_LEVELS];
+            for (int i = 0; i < scalingParameters.length; i++)
+            {
+                //if the file does not have enough entries, use the last entry for the rest of the levels
+                if (i < storedScalingParameters.size())
+                    scalingParameters[i] = ((Long) storedScalingParameters.get(i)).intValue();
+                else
+                    scalingParameters[i] = scalingParameters[i-1];
+            }
+            //successfuly read scaling_parameters
+            return scalingParameters;
+        }
+        else
+        {
+            return null;
+        }
     }
 
     public static Map<String, String> validateOptions(Map<String, String> options) throws ConfigurationException
@@ -196,9 +304,14 @@ public class AdaptiveController extends Controller
         int maxScalingParameter = DEFAULT_MAX_SCALING_PARAMETER;
 
         String s;
-        s = options.remove(STARTING_SCALING_PARAMETER);
-        if (s != null)
-            scalingParameter = Integer.parseInt(s);
+        String staticScalingFactors = options.remove(STATIC_SCALING_FACTORS_OPTION);
+        String staticScalingParameters = options.remove(SCALING_PARAMETERS_OPTION);
+        if (staticScalingFactors != null && staticScalingParameters != null)
+            throw new ConfigurationException(String.format("Either '%s' or '%s' should be used, not both", SCALING_PARAMETERS_OPTION, STATIC_SCALING_FACTORS_OPTION));
+        else if (staticScalingFactors != null)
+            parseScalingParameters(staticScalingFactors);
+        else if (staticScalingParameters != null)
+            parseScalingParameters(staticScalingParameters);
         s = options.remove(MIN_SCALING_PARAMETER);
         if (s != null)
             minScalingParameter = Integer.parseInt(s);
@@ -299,8 +412,20 @@ public class AdaptiveController extends Controller
         return minCost;
     }
 
+    /**
+     * Checks to see if the chosen compaction is a result of recent adaptive parameter change.
+     * An adaptive compaction is a compaction triggered by changing the scaling parameter W
+     */
     @Override
-    public int getMaxAdaptiveCompactions()
+    public boolean isRecentAdaptive(CompactionPick pick)
+    {
+        int numTables = pick.sstables().size();
+        int level = (int) pick.parent();
+        return (numTables >= getThreshold(level) && numTables < getPreviousThreshold(level));
+    }
+
+    @Override
+    public int getMaxRecentAdaptiveCompactions()
     {
         return maxAdaptiveCompactions;
     }
@@ -350,7 +475,7 @@ public class AdaptiveController extends Controller
 
         if (cost <= minCost)
         {
-            logger.debug("Adaptive compaction controller not updated, cost for current scaling parameter {} is below minimum cost {}: read cost: {}, write cost: {}\\nAverages: {}", scalingParameters[0], minCost, readCost, writeCost, calculator);
+            logger.debug("Adaptive compaction controller not updated, cost for current scaling parameter {} is below minimum cost {}: read cost: {}, write cost: {}\nAverages: {}", scalingParameters[0], minCost, readCost, writeCost, calculator);
             return;
         }
 
@@ -385,10 +510,10 @@ public class AdaptiveController extends Controller
             }
         }
 
-        logger.debug("Min cost: {}, min scaling parameter: {}, min sstable size: {}\nread costs: {}\nwrite costs: {}\ntot costs: {}\nAverages: {}",
+        logger.debug("Min cost: {}, min scaling parameter: {}, target sstable size: {}\nread costs: {}\nwrite costs: {}\ntot costs: {}\nAverages: {}",
                      candCost,
                      candScalingParameter,
-                     FBUtilities.prettyPrintMemory(getMinSstableSizeBytes()),
+                     FBUtilities.prettyPrintMemory(getTargetSSTableSize()),
                      Arrays.toString(readCosts),
                      Arrays.toString(writeCosts),
                      Arrays.toString(totCosts),
@@ -403,6 +528,9 @@ public class AdaptiveController extends Controller
             str.append("updated ").append(scalingParameters[0]).append(" -> ").append(candScalingParameter);
             this.previousScalingParameters[0] = scalingParameters[0]; //need to keep track of the previous scaling parameter for isAdaptive check
             this.scalingParameters[0] = candScalingParameter;
+
+            //store updated scaling parameters in case a node fails and needs to restart
+            storeControllerConfig();
         }
         else if (scalingParameters[0] == candScalingParameter)
         {
@@ -416,7 +544,14 @@ public class AdaptiveController extends Controller
                     str.append("updated for level ").append(i).append(": ").append(scalingParameters[i]).append(" -> ").append(candScalingParameter);
                     this.previousScalingParameters[i] = scalingParameters[i];
                     this.scalingParameters[i] = candScalingParameter;
+
+                    //store updated scaling parameters in case a node fails and needs to restart
+                    storeControllerConfig();
                     break;
+                }
+                else if (i == scalingParameters.length-1)
+                {
+                    str.append("unchanged because all levels have the same scaling parameter");
                 }
             }
         }
@@ -435,8 +570,14 @@ public class AdaptiveController extends Controller
     }
 
     @Override
+    public void storeControllerConfig()
+    {
+        storeOptions(keyspaceName, tableName, scalingParameters, getFlushSizeBytes());
+    }
+
+    @Override
     public String toString()
     {
-        return String.format("m: %d, o: %s, scalingParameter: %s - %s", minSstableSizeMB, Arrays.toString(survivalFactors), Arrays.toString(scalingParameters), calculator);
+        return String.format("t: %s, o: %s, scalingParameters: %s - %s", FBUtilities.prettyPrintMemory(targetSSTableSize), Arrays.toString(survivalFactors), Arrays.toString(scalingParameters), calculator);
     }
 }

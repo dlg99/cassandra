@@ -27,6 +27,9 @@ import org.apache.lucene.util.hnsw.ConcurrentHnswGraphBuilder;
 import org.apache.lucene.util.hnsw.HnswGraphBuilder;
 import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
 
+/**
+ * Provides a common ancestor for concurrent (for memtable) and serial (for compaction) graph builders.
+ */
 public abstract class CassandraHnswGraphBuilder<T>
 {
     public abstract long addGraphNode(int ordinal, RandomAccessVectorValues<T> vectors) throws IOException;
@@ -34,6 +37,8 @@ public abstract class CassandraHnswGraphBuilder<T>
     public abstract ExtendedHnswGraph getGraph();
 
     public abstract boolean isConcurrent();
+
+    public abstract int insertsInProgress();
 
     public static class ConcurrentBuilder<T> extends CassandraHnswGraphBuilder<T>
     {
@@ -65,6 +70,12 @@ public abstract class CassandraHnswGraphBuilder<T>
         public ExtendedHnswGraph getGraph()
         {
             return new ExtendedConcurrentHnswGraph(builder.getGraph());
+        }
+
+        @Override
+        public int insertsInProgress()
+        {
+            return builder.insertsInProgress();
         }
 
         @Override
@@ -110,6 +121,12 @@ public abstract class CassandraHnswGraphBuilder<T>
         public ExtendedHnswGraph getGraph()
         {
             return new ExtendedSerialHnswGraph(builder.getGraph());
+        }
+
+        @Override
+        public int insertsInProgress()
+        {
+            return 0;
         }
 
         @Override

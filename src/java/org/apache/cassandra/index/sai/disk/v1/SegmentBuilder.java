@@ -46,6 +46,8 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.StringHelper;
 
+import static org.apache.cassandra.index.sai.disk.hnsw.CassandraOnHeapHnsw.InvalidVectorBehavior.IGNORE;
+
 /**
  * Creates an on-heap index data structure to be flushed to an SSTable index.
  */
@@ -187,7 +189,7 @@ public abstract class SegmentBuilder
         @Override
         protected long addInternal(ByteBuffer term, int segmentRowId)
         {
-            return graphIndex.add(term, segmentRowId);
+            return graphIndex.add(term, segmentRowId, IGNORE);
         }
 
         @Override
@@ -245,23 +247,17 @@ public abstract class SegmentBuilder
         rowCount++;
 
         // segmentRowIdOffset should encode sstableRowId into Integer
-        int segmentRowId = castToSegmentRowId(sstableRowId, segmentRowIdOffset);
+        int segmentRowId = Math.toIntExact(sstableRowId - segmentRowIdOffset);
+
+        if (segmentRowId == PostingList.END_OF_STREAM)
+            throw new IllegalArgumentException("Illegal segment row id: END_OF_STREAM found");
+
         maxSegmentRowId = Math.max(maxSegmentRowId, segmentRowId);
 
         long bytesAllocated = addInternal(term, segmentRowId);
         totalBytesAllocated += bytesAllocated;
 
         return bytesAllocated;
-    }
-
-    public static int castToSegmentRowId(long sstableRowId, long segmentRowIdOffset)
-    {
-        int segmentRowId = Math.toIntExact(sstableRowId - segmentRowIdOffset);
-
-        if (segmentRowId == PostingList.END_OF_STREAM)
-            throw new IllegalArgumentException("Illegal segment row id: END_OF_STREAM found");
-
-        return segmentRowId;
     }
 
     long totalBytesAllocated()

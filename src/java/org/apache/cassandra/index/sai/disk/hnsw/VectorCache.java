@@ -23,7 +23,6 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.apache.cassandra.index.sai.disk.hnsw.CassandraOnDiskHnsw.OnDiskVectors;
 import org.apache.lucene.util.hnsw.HnswGraph;
 import org.jctools.maps.NonBlockingHashMapLong;
 
@@ -31,17 +30,17 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /**
  * Caches vectors intelligently, preferring vectors that occur in higher levels of the graph
- * and vectors that are closer to the level's entry points.
+ * and vectors that are closer (in the edge-wise, not similarity, sense) to the level's entry points.
  */
 public abstract class VectorCache
 {
     public abstract float[] get(int ordinal);
 
-    public static VectorCache load(HnswGraph hnsw, OnDiskVectors vectors, int capacityRemaining) throws IOException
+    public static VectorCache load(HnswGraph hnsw, OnDiskVectors vectors, int capacity) throws IOException
     {
-        if (capacityRemaining <= 0)
+        if (capacity <= 0)
             return new EmptyVectorCache();
-        return new NBHMVectorCache(hnsw, vectors, capacityRemaining);
+        return new NBHMVectorCache(hnsw, vectors, capacity);
     }
 
     public abstract long ramBytesUsed();
@@ -70,9 +69,7 @@ public abstract class VectorCache
         {
             dimension = vectors.dimension();
             var topLevel = hnsw.numLevels() - 1;
-            capacityRemaining = populateCache(hnsw, topLevel, hnsw.entryNode(), vectors, capacityRemaining);
             var visitedNodes = new HashSet<>(List.of(hnsw.entryNode())); // resets between levels
-            var cachedNodes = new HashSet<>(visitedNodes); // does not reset between levels
 
             // we deliberately don't cache level 0 since that's going to have the worst efficiency
             for (int level = topLevel; level > 0 && capacityRemaining > 0; level--)
@@ -85,21 +82,22 @@ public abstract class VectorCache
                 while (!nodeQueue.isEmpty() && capacityRemaining > 0)
                 {
                     var node = nodeQueue.poll();
-                    if (visitedNodes.contains(node))
+                    if (!visitedNodes.add(node))
                         continue;
-                    visitedNodes.add(node);
 
-                    if (!cachedNodes.contains(node))
+                    if (!cache.containsKey((long) node))
                     {
                         try
                         {
-                            capacityRemaining = populateCache(hnsw, level, node, vectors, capacityRemaining);
+                            var vector = new float[dimension];
+                            vectors.readVector(node, vector);
+                            cache.put(node, vector);
+                            capacityRemaining -= dimension * Float.BYTES;
                         }
                         catch (IOException e)
                         {
                             throw new RuntimeException(e);
                         }
-                        cachedNodes.add(node);
                     }
 
                     // add neighbors of current node to queue
@@ -116,25 +114,6 @@ public abstract class VectorCache
             }
         }
 
-        private int populateCache(HnswGraph hnsw, int level, int node, OnDiskVectors vectors, int capacityRemaining) throws IOException
-        {
-            hnsw.seek(level, node);
-            while (capacityRemaining > 0)
-            {
-                var next = hnsw.nextNeighbor();
-                if (next == NO_MORE_DOCS)
-                    break;
-                if (cache.containsKey(next))
-                    continue;
-
-                var vector = new float[dimension];
-                vectors.readVector(next, vector);
-                cache.put(next, vector);
-                capacityRemaining -= vector.length * Float.BYTES;
-            }
-            return capacityRemaining;
-        }
-
         @Override
         public float[] get(int ordinal)
         {
@@ -145,8 +124,7 @@ public abstract class VectorCache
         public long ramBytesUsed()
         {
             return RamEstimation.concurrentHashMapRamUsed(cache.size())
-                           + (long) cache.size() * Float.BYTES * dimension;
-
+                   + (long) cache.size() * Float.BYTES * dimension;
         }
     }
 }

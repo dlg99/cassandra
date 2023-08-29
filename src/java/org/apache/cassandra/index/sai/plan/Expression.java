@@ -76,6 +76,7 @@ public class Expression
                     return PREFIX;
 
                 case LIKE_MATCHES:
+                case ANALYZER_MATCHES:
                     return MATCH;
 
                 case IN:
@@ -133,6 +134,7 @@ public class Expression
         {
             case LIKE_PREFIX:
             case LIKE_MATCHES:
+            case ANALYZER_MATCHES:
             case EQ:
             case CONTAINS:
             case CONTAINS_KEY:
@@ -383,17 +385,24 @@ public class Expression
     }
 
     /**
-     * A representation of a column value in it's raw and encoded form.
+     * A representation of a column value in its raw and encoded form.
      */
     public static class Value
     {
         public final ByteBuffer raw;
         public final ByteBuffer encoded;
 
+        /**
+         * The native representation of our vector indexes is float[], so we cache that here as well
+         * to avoid repeated expensive conversions.  Always null for non-vector types.
+         */
+        public final float[] vector;
+
         public Value(ByteBuffer value, AbstractType<?> type)
         {
             this.raw = value;
             this.encoded = TypeUtil.encode(value, type);
+            this.vector = type.isVector() ? TypeUtil.decomposeVector(type, raw.duplicate()) : null;
         }
 
         @Override

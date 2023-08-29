@@ -29,8 +29,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import javax.annotation.Nullable;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,7 +132,7 @@ public abstract class Tracing implements ExecutorLocal<TraceState>
                 logger.error(String.format("Cannot use class %s for tracing, ignoring by defaulting to normal tracing", customTracingClass), e);
             }
         }
-        instance = null != tracing ? tracing : new TracingImpl();
+        instance = tracing == null ? new TracingImpl() : tracing;
     }
 
     public UUID getSessionId()
@@ -153,6 +151,17 @@ public abstract class Tracing implements ExecutorLocal<TraceState>
     {
         assert isTracing();
         return state.get().ttl;
+    }
+
+    public static boolean traceSinglePartitions()
+    {
+        return instance.get() != null && !instance.get().isRangeQuery();
+    }
+
+    public void setRangeQuery(boolean rangeQuery)
+    {
+        assert isTracing();
+        state.get().setRangeQuery(rangeQuery);
     }
 
     /**

@@ -107,8 +107,12 @@ public class QueryViewBuilder
         {
             if (Tracing.isTracing())
             {
-                var indexNames = referencedIndexes.stream().map(i -> i.getIndexContext().getIndexName()).collect(Collectors.toList());
-                Tracing.trace("Querying storage-attached indexes {}", indexNames);
+                var groupedIndexes = referencedIndexes.stream().collect(
+                    Collectors.groupingBy(i -> i.getIndexContext().getIndexName(), Collectors.counting()));
+                var summary = groupedIndexes.entrySet().stream()
+                                            .map(e -> String.format("%s (%s sstables)", e.getKey(), e.getValue()))
+                                            .collect(Collectors.joining(", "));
+                Tracing.trace("Querying storage-attached indexes {}", summary);
             }
         }
     }
@@ -134,9 +138,6 @@ public class QueryViewBuilder
 
         for (Expression expression : expressions)
         {
-            // REVIEWME we don't need to leave placeholders for memtable filtering here,
-            // that's handled separately in QueryController now
-
             // Non-index column query should only act as FILTER BY for satisfiedBy(Row) method
             // because otherwise it likely to go through the whole index.
             if (!expression.context.isIndexed())
@@ -156,12 +157,10 @@ public class QueryViewBuilder
         return queryView;
     }
 
-    // REVIEWME:
     // I've removed the concept of "most selective index" since we don't actually have per-sstable
     // statistics on that; it looks like it was only used to check bounds overlap, so computing
     // an actual global bounds should be an improvement.  But computing global bounds as an intersection
     // of individual bounds is messy because you can end up with more than one range.
-
     private boolean indexInRange(SSTableIndex index)
     {
         SSTableReader sstable = index.getSSTable();

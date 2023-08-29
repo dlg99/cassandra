@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.index.sai;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,7 +26,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -34,6 +34,8 @@ import org.junit.Test;
 import org.slf4j.Logger;
 
 import org.apache.cassandra.db.memtable.TrieMemtable;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class LongVectorTest extends SAITester
 {
@@ -52,7 +54,13 @@ public class LongVectorTest extends SAITester
         TrieMemtable.SHARD_COUNT = 4 * threadCount;
     }
 
-    public void testConcurrentOps(Consumer<Integer> op) throws ExecutionException, InterruptedException
+    @FunctionalInterface
+    private interface Op
+    {
+        public void run(int i) throws Throwable;
+    }
+
+    public void testConcurrentOps(Op op) throws ExecutionException, InterruptedException
     {
         createTable(String.format("CREATE TABLE %%s (key int primary key, value vector<float, %s>, score float)", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(value) USING 'StorageAttachedIndex' WITH OPTIONS = { 'similarity_function': 'dot_product' }");
@@ -65,29 +73,94 @@ public class LongVectorTest extends SAITester
         Collections.shuffle(keys);
         var task = fjp.submit(() -> keys.stream().parallel().forEach(i ->
         {
-            op.accept(i);
+            wrappedOp(op, i);
             if (counter.incrementAndGet() % 10_000 == 0)
             {
                 var elapsed = System.currentTimeMillis() - start;
                 logger.info("{} ops in {}ms = {} ops/s", counter.get(), elapsed, counter.get() * 1000.0 / elapsed);
             }
+            if (ThreadLocalRandom.current().nextDouble() < 0.001)
+                flush();
         }));
         fjp.shutdown();
         task.get(); // re-throw
     }
 
+    private static void wrappedOp(Op op, Integer i)
+    {
+        try
+        {
+            op.run(i);
+        }
+        catch (Throwable e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    public void testConcurrentReadsWritesDeletes() throws ExecutionException, InterruptedException
+    {
+        testConcurrentOps(i -> {
+            var R = ThreadLocalRandom.current();
+            var v = randomVector(dimension);
+            if (R.nextDouble() < 0.2 || keysInserted.isEmpty())
+            {
+                execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
+                keysInserted.add(i);
+            } else if (R.nextDouble() < 0.1) {
+                var key = keysInserted.getRandom();
+                execute("DELETE FROM %s WHERE key = ?", key);
+            } else if (R.nextDouble() < 0.5) {
+                var key = keysInserted.getRandom();
+                execute("SELECT * FROM %s WHERE key = ? ORDER BY value ANN OF ? LIMIT ?", key, v, R.nextInt(1, 100));
+            } else {
+                execute("SELECT * FROM %s ORDER BY value ANN OF ? LIMIT ?", v, R.nextInt(1, 100));
+            }
+        });
+    }
+
+    // like testConcurrentReadsWritesDeletes, but generates multiple rows w/ the same vector, and
+    // the sub-op weights are biased more towards doing additional inserts
+    @Test
+    public void testMultiplePostings() throws ExecutionException, InterruptedException
+    {
+        testConcurrentOps(i -> {
+            var R = ThreadLocalRandom.current();
+            var v = sequentiallyDuplicateVector(i, dimension);
+            if (R.nextDouble() < 0.8 || keysInserted.isEmpty())
+            {
+                execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
+                keysInserted.add(i);
+            } else if (R.nextDouble() < 0.1) {
+                var key = keysInserted.getRandom();
+                execute("DELETE FROM %s WHERE key = ?", key);
+            } else if (R.nextDouble() < 0.5) {
+                var key = keysInserted.getRandom();
+                execute("SELECT * FROM %s WHERE key = ? ORDER BY value ANN OF ? LIMIT ?", key, v, R.nextInt(1, 100));
+            } else {
+                execute("SELECT * FROM %s ORDER BY value ANN OF ? LIMIT ?", v, R.nextInt(1, 100));
+            }
+        });
+    }
+
     @Test
     public void testConcurrentReadsWrites() throws ExecutionException, InterruptedException
     {
-        testConcurrentOps(i ->
-        {
-            try
+        testConcurrentOps(i -> {
+            var R = ThreadLocalRandom.current();
+            var v = randomVector(dimension);
+            if (R.nextDouble() < 0.1 || keysInserted.isEmpty())
             {
-                readWriteOp(i);
-            }
-            catch (Throwable e)
-            {
-                throw new RuntimeException(e);
+                execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
+                keysInserted.add(i);
+            } else if (R.nextDouble() < 0.5) {
+                var key = keysInserted.getRandom();
+                var results = execute("SELECT * FROM %s WHERE key = ? ORDER BY value ANN OF ? LIMIT ?", key, v, R.nextInt(1, 100));
+                assertThat(results).hasSize(1);
+            } else {
+                var results = execute("SELECT * FROM %s ORDER BY value ANN OF ? LIMIT ?", v, R.nextInt(1, 100));
+                assertThat(results).hasSizeGreaterThan(0); // VSTODO can we make a stronger assertion?
             }
         });
     }
@@ -95,63 +168,62 @@ public class LongVectorTest extends SAITester
     @Test
     public void testConcurrentWrites() throws ExecutionException, InterruptedException
     {
-        testConcurrentOps(i ->
-        {
-            try
-            {
-                writeOp(i);
-            }
-            catch (Throwable e)
-            {
-                throw new RuntimeException(e);
-            }
+        testConcurrentOps(i -> {
+            var v = randomVector(dimension);
+            execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
         });
     }
 
-    private void writeOp(int i) throws Throwable
+    /**
+     * @return a normalized vector with the given dimension, where each vector from 0 .. N-1 is the same,
+     * N .. 2N-1 is the same, etc., where N is the number of cores.
+     */
+    private static Vector<Float> sequentiallyDuplicateVector(int i, int dimension)
     {
-        var R = ThreadLocalRandom.current();
-        var v = normalizedVector(R, dimension);
-        execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
-        if (R.nextDouble() < 0.001)
-            flush();
-    }
-
-    private void readWriteOp(int i) throws Throwable
-    {
-        var R = ThreadLocalRandom.current();
-        var v = normalizedVector(R, dimension);
-        if (R.nextDouble() < 0.1 || keysInserted.isEmpty())
-        {
-            execute("INSERT INTO %s (key, value) VALUES (?, ?)", i, v);
-            keysInserted.add(i);
-        } else if (R.nextDouble() < 0.5) {
-            var key = keysInserted.getRandom();
-            execute("SELECT * FROM %s WHERE key = ? ORDER BY value ANN OF ? LIMIT ?", key, v, R.nextInt(1, 100));
-        } else {
-            execute("SELECT * FROM %s ORDER BY value ANN OF ? LIMIT ?", v, R.nextInt(1, 100));
-        }
-
-// uncommenting makes it go faster for some reason
-//        if (R.nextDouble() < 0.001)
-//            flush();
-    }
-
-    private Vector<Float> normalizedVector(ThreadLocalRandom r, int dimension)
-    {
+        int j = 1 + i / Runtime.getRuntime().availableProcessors();
         var vector = new Float[dimension];
-        var sum = 0.0f;
+        Arrays.fill(vector, 0.0f);
+        outer:
+        while (true)
+        {
+            for (int k = 0; k < dimension; k++)
+            {
+                vector[k] += 1.0f;
+                if (j-- <= 0)
+                    break outer;
+            }
+        }
+        normalize(vector);
+        return new Vector<>(vector);
+    }
+
+    /** @return a normalized vector with the given dimension */
+    private static Vector<Float> randomVector(int dimension)
+    {
+        var R = ThreadLocalRandom.current();
+
+        var vector = new Float[dimension];
         for (int i = 0; i < dimension; i++)
         {
-            vector[i] = r.nextFloat();
-            sum += vector[i] * vector[i];
+            vector[i] = R.nextFloat();
+        }
+        normalize(vector);
+
+        return new Vector<>(vector);
+    }
+
+    /** Normalize the given vector in-place */
+    private static void normalize(Float[] v)
+    {
+        var sum = 0.0f;
+        for (int i = 0; i < v.length; i++)
+        {
+            sum += v[i] * v[i];
         }
 
         sum = (float) Math.sqrt(sum);
-        for (int i = 0; i < dimension; i++)
-            vector[i] /= sum;
-
-        return new Vector<>(vector);
+        for (int i = 0; i < v.length; i++)
+            v[i] /= sum;
     }
 
     private static class KeySet
@@ -170,7 +242,8 @@ public class LongVectorTest extends SAITester
             if (isEmpty())
                 throw new IllegalStateException();
             var i = ThreadLocalRandom.current().nextInt(ordinal.get());
-            return keys.get(i);
+            // in case there is race with add(key), retry another random
+            return keys.containsKey(i) ? keys.get(i) : getRandom();
         }
 
         public boolean isEmpty()

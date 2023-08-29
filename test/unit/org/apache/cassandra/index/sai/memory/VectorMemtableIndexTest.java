@@ -55,6 +55,7 @@ import org.apache.cassandra.index.sai.disk.hnsw.VectorMemtableIndex;
 import org.apache.cassandra.index.sai.plan.Expression;
 import org.apache.cassandra.index.sai.utils.PrimaryKey;
 import org.apache.cassandra.index.sai.utils.RangeIterator;
+import org.apache.cassandra.index.sai.utils.RangeUtil;
 import org.apache.cassandra.inject.Injections;
 import org.apache.cassandra.inject.InvokePointBuilder;
 import org.apache.cassandra.locator.TokenMetadata;
@@ -143,22 +144,28 @@ public class VectorMemtableIndexTest extends SAITester
             {
                 while (iterator.hasNext())
                 {
-                    int key = Int32Type.instance.compose(iterator.next().partitionKey().getKey());
+                    PrimaryKey primaryKey = iterator.next();
+                    int key = Int32Type.instance.compose(primaryKey.partitionKey().getKey());
                     assertFalse(foundKeys.contains(key));
+
+                    assertTrue(keyRange.contains(primaryKey.partitionKey()));
                     assertTrue(rowMap.containsKey(key));
                     foundKeys.add(key);
                 }
             }
             // with -Dcassandra.test.random.seed=260652334768666, there is one missing key
             long expectedResult = Math.min(limit, keysInRange.size());
-            assertEquals("Missing key: " + Sets.difference(keysInRange, foundKeys), expectedResult, foundKeys.size());
+            if (RangeUtil.coversFullRing(keyRange))
+                assertEquals("Missing key: " + Sets.difference(keysInRange, foundKeys), expectedResult, foundKeys.size());
+            else // if skip ANN, returned keys maybe larger than limit
+                assertTrue("Missing key: " + Sets.difference(keysInRange, foundKeys), expectedResult <= foundKeys.size());
         }
     }
 
     @Test
     public void indexIteratorTest()
     {
-        // TODO
+        // VSTODO
     }
 
     private Expression generateRandomExpression()

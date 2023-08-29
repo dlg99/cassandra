@@ -125,6 +125,8 @@ public final class CreateTableStatement extends AlterSchemaStatement
                                                      .sum();
                 Guardrails.tablesLimit.guard(totalUserTables + 1, tableName, false, state);
             }
+
+            rawColumns.forEach((name, raw) -> raw.validate(state, "Column " + name));
         }
     }
 
@@ -411,16 +413,6 @@ public final class CreateTableStatement extends AlterSchemaStatement
     public Set<String> clientWarnings(KeyspacesDiff diff)
     {
         ImmutableSet.Builder<String> warnings = ImmutableSet.builder();
-
-        int tableCount = Schema.instance.getNumberOfTables();
-        if (DatabaseDescriptor.tableCountWarnThreshold() > 0 && tableCount > DatabaseDescriptor.tableCountWarnThreshold())
-        {
-            String msg = String.format("Cluster already contains %d tables in %d keyspaces. Having a large number of tables will significantly slow down schema dependent cluster operations.",
-                                       tableCount,
-                                       Schema.instance.getKeyspaces().size());
-            logger.warn(msg);
-            warnings.add(msg);
-        }
 
         if (attrs.hasUnsupportedDseCompaction())
         {

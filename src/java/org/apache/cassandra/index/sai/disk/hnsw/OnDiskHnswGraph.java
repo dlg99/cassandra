@@ -43,75 +43,111 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
     final CachedLevel[] cachedLevels;
     private final int cacheSizeInBytes;
 
-    public OnDiskHnswGraph(FileHandle fh, long segmentOffset, long segmentLength, int cacheRamBudget) throws IOException {
+    public OnDiskHnswGraph(FileHandle fh, long segmentOffset, long segmentLength, int neighborsRamBudget)
+    {
         this.fh = fh;
         try (var reader = fh.createReader())
         {
-            segmentSize = segmentOffset + segmentLength;
-            reader.seek(segmentOffset);
+            try
+            {
+                reader.seek(segmentOffset);
+                segmentSize = segmentOffset + segmentLength;
 
-            size = reader.readInt();
-            numLevels = reader.readInt();
-            cachedLevels = new CachedLevel[numLevels];
-            entryNode = reader.readInt();
+                size = reader.readInt();
+                numLevels = reader.readInt();
+                cachedLevels = new CachedLevel[numLevels];
+                entryNode = reader.readInt();
 
-            // always load the level offsets
-            levelOffsets = new long[numLevels];
-            for (int i = 0; i < numLevels; i++) {
-                levelOffsets[i] = reader.readLong();
+                // always load the level offsets
+                levelOffsets = new long[numLevels];
+                for (int i = 0; i < numLevels; i++) {
+                    levelOffsets[i] = reader.readLong();
+                }
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException("Error initializing OnDiskHnswGraph at offset " + segmentOffset, e);
             }
 
-            // cache levels based on cacheRamBudget starting with the top level
-            // if we have enough room left in the budget, cache the entire level including neighbors
-            // if we don't have enough room left in the budget, cache only the level's node offsets
-            int remainingRamBudget = cacheRamBudget;
-            int topLevel = numLevels - 1;
-            for (int level = topLevel; level >= 0 && remainingRamBudget > 0; level--) {
-                reader.seek(levelOffsets[level]);
-                int numNodes = reader.readInt();
-                long nodeIdsSize = (long) numNodes * Integer.BYTES;
-                long offsetsSize = (long) numNodes * Long.BYTES;
-                long neighborsSize = levelSize(level) - (offsetsSize + nodeIdsSize);
+            cacheSizeInBytes = loadCache(segmentOffset, neighborsRamBudget, reader);
+        }
+    }
 
-                if (remainingRamBudget >= nodeIdsSize + neighborsSize) {
+    private int loadCache(long segmentOffset, int neighborsRamBudget, RandomAccessReader reader)
+    {
+        int cacheSizeInBytes = 0;
+        try
+        {
+            // cache full levels including neighbors up to neighborsRamBudget, starting with the top level,
+            // but always cache all levels above the bottom two levels -- this will be ~1% of the graph.
+            // then on L1, cache at least the offsets
+            // L0 we do not cache since we only need one extra seek (no bsearch) to read the neighbors offset
+            int level = numLevels - 1;
+            if (neighborsRamBudget > 0) // for testing we allow disabling by setting budget=0
+            {
+                for (; level >= 0; level--)
+                {
+                    reader.seek(levelOffsets[level]);
+                    int numNodes = reader.readInt();
+                    long nodeIdsSize = (long) numNodes * Integer.BYTES;
+                    long offsetsSize = (long) numNodes * Long.BYTES;
+                    long neighborsSize = levelSize(level) - (offsetsSize + nodeIdsSize);
+
+                    if (level <= 1 && cacheSizeInBytes + nodeIdsSize + neighborsSize > neighborsRamBudget)
+                        break;
+
                     // Cache entire level including neighbors
                     int[] nodeIds = new int[numNodes];
                     int[][] neighbors = new int[numNodes][];
 
                     // Read node IDs
-                    for (int i = 0; i < numNodes; i++) {
+                    for (int i = 0; i < numNodes; i++)
+                    {
                         nodeIds[i] = reader.readInt();  // read node id
                         reader.skipBytes(Long.BYTES);   // skip offset
                     }
 
                     // Read neighbors
-                    for (int i = 0; i < numNodes; i++) {
+                    for (int i = 0; i < numNodes; i++)
+                    {
                         int numNeighbors = reader.readInt();
                         neighbors[i] = new int[numNeighbors];
-                        for (int j = 0; j < numNeighbors; j++) {
+                        for (int j = 0; j < numNeighbors; j++)
+                        {
                             neighbors[i][j] = reader.readInt();
                         }
                     }
 
                     cachedLevels[level] = new CachedLevel(level, nodeIds, neighbors);
-                    remainingRamBudget -= (nodeIdsSize + neighborsSize);
-                } else if (remainingRamBudget >= nodeIdsSize + offsetsSize) {
-                    // Cache level's node offsets
-                    int[] nodeIds = new int[numNodes];
-                    long[] offsets = new long[numNodes];
-                    for (int i = 0; i < numNodes; i++) {
-                        nodeIds[i] = reader.readInt();
-                        offsets[i] = reader.readLong();
-                    }
-                    cachedLevels[level] = new CachedLevel(level, nodeIds, offsets);
-                    remainingRamBudget -= (nodeIdsSize + offsetsSize);
-                } else {
-                    // No room left in the RAM budget
-                    break;
+                    cacheSizeInBytes += nodeIdsSize + neighborsSize;
                 }
             }
-            cacheSizeInBytes = cacheRamBudget - remainingRamBudget;
+
+            // Cache node offsets for levels 1 and up, if their neighbors aren't already cached
+            for ( ; level >= 1; level--)
+            {
+                reader.seek(levelOffsets[level]);
+                int numNodes = reader.readInt();
+                int[] nodeIds = new int[numNodes];
+                long[] offsets = new long[numNodes];
+                long nodeIdsSize = (long) numNodes * Integer.BYTES;
+                long offsetsSize = (long) numNodes * Long.BYTES;
+                for (int i = 0; i < numNodes; i++) {
+                    nodeIds[i] = reader.readInt();
+                    offsets[i] = reader.readLong();
+                }
+                cachedLevels[level] = new CachedLevel(level, nodeIds, offsets);
+                cacheSizeInBytes += nodeIdsSize + offsetsSize;
+            }
         }
+        catch (Exception e)
+        {
+            var summary = String.format("Size: %d, Entry node: %d, Level offsets: %s",
+                                        size, entryNode, Arrays.toString(levelOffsets));
+            throw new RuntimeException(String.format("Error initializing OnDiskHnswGraph [%s] at offset %d",
+                                                     summary, segmentOffset), e);
+        }
+        return cacheSizeInBytes;
     }
 
     int getCacheSizeInBytes() {
@@ -173,10 +209,9 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
     {
         private final RandomAccessReader reader;
         private final QueryContext queryContext;
-        private int currentNeighborCount;
         private int currentNeighborsRead;
         private long currentCachedLevelNode = -1;
-        private int[] currentCachedNeighbors;
+        private int[] currentNeighbors;
 
         public OnDiskView(RandomAccessReader reader, QueryContext queryContext)
         {
@@ -194,9 +229,8 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
                 return;
             }
 
-            queryContext.hnswNodesAccessed++;
             currentCachedLevelNode = -1;
-            currentCachedNeighbors = null;
+            currentNeighbors = null;
             currentNeighborsRead = 0;
             long neighborsOffset;
 
@@ -205,10 +239,8 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
             {
                 if (cachedLevel.containsNeighbors())
                 {
-                    currentCachedNeighbors = cachedLevel.neighborsFor(target);
+                    currentNeighbors = cachedLevel.neighborsFor(target);
                     currentCachedLevelNode = levelNodeOf(level, target);
-                    currentNeighborCount = currentCachedNeighbors.length;
-                    queryContext.hnswNodeCacheHits++;
                     return;
                 }
 
@@ -217,39 +249,17 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
             }
             else
             {
-                // seek to the level
-                reader.seek(levelOffsets[level]);
-                // binary search for the node's index entry within the level
-                int numNodes = reader.readInt();
-                long firstOffset = reader.getFilePointer();
-                long lastOffset = firstOffset + numNodes * 12L;
-                binarySearchNodeOffset(firstOffset, lastOffset, target);
+                assert level == 0 : level; // other levels should all have a cache entry
+                // level 0 ordinals are consecutive so we can easily compute the location from which to read the offset
+                long neighborsOffsetOffset = levelOffsets[0] + Integer.BYTES + (long) target * (Integer.BYTES + Long.BYTES);
+                reader.seek(neighborsOffsetOffset + 4);
                 neighborsOffset = reader.readLong();
             }
 
             // seek to the neighbor list
             reader.seek(neighborsOffset);
-            currentNeighborCount = reader.readInt();
-        }
-
-        private long binarySearchNodeOffset(long firstOffset, long lastOffset, int target)
-        {
-            long index = DiskBinarySearch.searchInt(0, Math.toIntExact((lastOffset - firstOffset) / 12), target, i -> {
-                try
-                {
-                    long offset = firstOffset + i * 12;
-                    reader.seek(offset);
-                    return reader.readInt();
-                }
-                catch (IOException e)
-                {
-                    throw new RuntimeException(e);
-                }
-            });
-            if (index < 0)
-                throw new IllegalStateException("Element " + target + " not found");
-
-            return firstOffset + index * 12;
+            currentNeighbors = new int[reader.readInt()];
+            reader.readIntsAt(reader.getPosition(), currentNeighbors);
         }
 
         @Override
@@ -259,18 +269,11 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
         }
 
         @Override
-        public int nextNeighbor() throws IOException
+        public int nextNeighbor()
         {
-            if (currentNeighborsRead++ < currentNeighborCount)
+            if (currentNeighborsRead++ < currentNeighbors.length)
             {
-                if (currentCachedNeighbors != null)
-                    return currentCachedNeighbors[currentNeighborsRead - 1];
-                else
-                {
-                    var n = reader.readInt();
-                    assert n < size() : "neighbor " + n + " is out of bounds for graph of size " + size();
-                    return n;
-                }
+                return currentNeighbors[currentNeighborsRead - 1];
             }
             return NO_MORE_DOCS;
         }
@@ -349,7 +352,7 @@ public class OnDiskHnswGraph extends HnswGraph implements AutoCloseable
     }
 
     @Override
-    public NodesIterator getNodesOnLevel(int level) throws IOException
+    public NodesIterator getNodesOnLevel(int level)
     {
         throw new UnsupportedOperationException();
     }

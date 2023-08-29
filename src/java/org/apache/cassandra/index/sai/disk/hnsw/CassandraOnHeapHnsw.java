@@ -22,18 +22,22 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
+import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.VectorType;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.sai.IndexContext;
 import org.apache.cassandra.index.sai.disk.format.IndexComponent;
 import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
@@ -54,13 +58,16 @@ import org.apache.lucene.util.hnsw.NeighborQueue;
 
 public class CassandraOnHeapHnsw<T>
 {
-    private final ConcurrentVectorValues vectorValues;
+    private static final Logger logger = LoggerFactory.getLogger(CassandraOnHeapHnsw.class);
+
+    private final RamAwareVectorValues vectorValues;
     private final CassandraHnswGraphBuilder<float[]> builder;
     private final VectorType.VectorSerializer serializer;
     private final VectorSimilarityFunction similarityFunction;
-    final Map<float[], VectorPostings<T>> postingsMap;
+    private final Map<float[], VectorPostings<T>> postingsMap;
+    private final NonBlockingHashMapLong<VectorPostings<T>> postingsByOrdinal;
     private final AtomicInteger nextOrdinal = new AtomicInteger();
-    private final Set<Integer> deletedOrdinals = ConcurrentHashMap.newKeySet();
+    private volatile boolean hasDeletions;
 
     /**
      * @param termComparator the vector type
@@ -82,13 +89,16 @@ public class CassandraOnHeapHnsw<T>
     public CassandraOnHeapHnsw(AbstractType<?> termComparator, IndexWriterConfig indexWriterConfig, boolean concurrent)
     {
         serializer = (VectorType.VectorSerializer)termComparator.getSerializer();
-        vectorValues = new ConcurrentVectorValues(((VectorType)termComparator).dimension);
+        vectorValues = concurrent
+                       ? new ConcurrentVectorValues(((VectorType) termComparator).dimension)
+                       : new CompactionVectorValues(((VectorType<Float>) termComparator));
         similarityFunction = indexWriterConfig.getSimilarityFunction();
         // We need to be able to inexpensively distinguish different vectors, with a slower path
         // that identifies vectors that are equal but not the same reference.  A comparison-
         // based Map (which only needs to look at vector elements until a difference is found)
         // is thus a better option than hash-based (which has to look at all elements to compute the hash).
         postingsMap = new ConcurrentSkipListMap<>(Arrays::compare);
+        postingsByOrdinal = new NonBlockingHashMapLong<>();
 
         builder = concurrent
                   ? new CassandraHnswGraphBuilder.ConcurrentBuilder<>(vectorValues,
@@ -110,14 +120,35 @@ public class CassandraOnHeapHnsw<T>
 
     public boolean isEmpty()
     {
-        return size() == 0;
+        return postingsMap.values().stream().allMatch(VectorPostings::isEmpty);
     }
 
-    public long add(ByteBuffer term, T key)
+    /**
+     * @return the incremental bytes ysed by adding the given vector to the index
+     */
+    public long add(ByteBuffer term, T key, InvalidVectorBehavior behavior)
     {
         assert term != null && term.remaining() != 0;
 
         var vector = serializer.deserializeFloatArray(term);
+        if (behavior == InvalidVectorBehavior.IGNORE)
+        {
+            try
+            {
+                validateIndexable(vector, similarityFunction);
+            }
+            catch (InvalidRequestException e)
+            {
+                logger.trace("Ignoring invalid vector during index build against existing data: {}", e);
+                return 0;
+            }
+        }
+        else
+        {
+            assert behavior == InvalidVectorBehavior.FAIL;
+            validateIndexable(vector, similarityFunction);
+        }
+
         var bytesUsed = new AtomicLong();
         var newVector = new AtomicBoolean();
         // if the vector is already in the graph, all that happens is that the postings list is updated
@@ -130,16 +161,19 @@ public class CassandraOnHeapHnsw<T>
         var postings = postingsMap.computeIfAbsent(vector, v -> {
             var bytes = RamEstimation.concurrentHashMapRamUsed(1); // the new posting Map entry
             var ordinal = nextOrdinal.getAndIncrement();
-            bytes += vectorValues.add(ordinal, vector);
+            bytes += (vectorValues instanceof ConcurrentVectorValues)
+                     ? ((ConcurrentVectorValues) vectorValues).add(ordinal, vector)
+                     : ((CompactionVectorValues) vectorValues).add(ordinal, term);
             bytes += VectorPostings.emptyBytesUsed();
             bytesUsed.addAndGet(bytes);
             newVector.set(true);
-            return new VectorPostings<>(ordinal);
+            var vp = new VectorPostings<T>(ordinal);
+            postingsByOrdinal.put(ordinal, vp);
+            return vp;
         });
         if (postings.add(key))
         {
             bytesUsed.addAndGet(VectorPostings.bytesPerPosting());
-            deletedOrdinals.remove(postings.getOrdinal());
             if (newVector.get()) {
                 try
                 {
@@ -154,9 +188,46 @@ public class CassandraOnHeapHnsw<T>
         return bytesUsed.get();
     }
 
+    // copied out of a Lucene PR -- hopefully committed soon
+    public static final float MAX_FLOAT32_COMPONENT = 1E17f;
+    public static float[] checkInBounds(float[] v) {
+        for (int i = 0; i < v.length; i++) {
+            if (!Float.isFinite(v[i])) {
+                throw new IllegalArgumentException("non-finite value at vector[" + i + "]=" + v[i]);
+            }
+
+            if (Math.abs(v[i]) > MAX_FLOAT32_COMPONENT) {
+                throw new IllegalArgumentException("Out-of-bounds value at vector[" + i + "]=" + v[i]);
+            }
+        }
+        return v;
+    }
+
+    static void validateIndexable(float[] vector, VectorSimilarityFunction similarityFunction)
+    {
+        try
+        {
+            checkInBounds(vector);
+        }
+        catch (IllegalArgumentException e)
+        {
+            throw new InvalidRequestException(e.getMessage());
+        }
+
+        if (similarityFunction == VectorSimilarityFunction.COSINE)
+        {
+            for (int i = 0; i < vector.length; i++)
+            {
+                if (vector[i] != 0)
+                    return;
+            }
+            throw new InvalidRequestException("Zero vectors cannot be indexed or queried with cosine similarity");
+        }
+    }
+
     public Collection<T> keysFromOrdinal(int node)
     {
-        return postingsMap.get(vectorValues.vectorValue(node)).getPostings();
+        return postingsByOrdinal.get(node).getPostings();
     }
 
     public void remove(ByteBuffer term, T key)
@@ -173,9 +244,8 @@ public class CassandraOnHeapHnsw<T>
             return;
         }
 
+        hasDeletions = true;
         postings.remove(key);
-        if (postings.isEmpty())
-            deletedOrdinals.add(postings.getOrdinal());
     }
 
     /**
@@ -184,6 +254,7 @@ public class CassandraOnHeapHnsw<T>
     public PriorityQueue<T> search(float[] queryVector, int limit, Bits toAccept, int visitedLimit)
     {
         assert builder.isConcurrent();
+        validateIndexable(queryVector, similarityFunction);
 
         // search() errors out when an empty graph is passed to it
         if (vectorValues.size() == 0)
@@ -198,7 +269,7 @@ public class CassandraOnHeapHnsw<T>
                                                        VectorEncoding.FLOAT32,
                                                        similarityFunction,
                                                        builder.getGraph(),
-                                                       BitsUtil.bitsIgnoringDeleted(toAccept, deletedOrdinals),
+                                                       hasDeletions ? BitsUtil.bitsIgnoringDeleted(toAccept, postingsByOrdinal) : toAccept,
                                                        visitedLimit);
         }
         catch (IOException e)
@@ -252,30 +323,50 @@ public class CassandraOnHeapHnsw<T>
 
     public SegmentMetadata.ComponentMetadataMap writeData(IndexDescriptor indexDescriptor, IndexContext indexContext, Function<T, Integer> postingTransformer) throws IOException
     {
+        int nInProgress = builder.insertsInProgress();
+        assert nInProgress == 0 : String.format("Attempting to write graph while %d inserts are in progress", nInProgress);
+        assert nextOrdinal.get() == builder.getGraph().size() : String.format("nextOrdinal %d != graph size %d -- ordinals should be sequential",
+                                                                              nextOrdinal.get(), builder.getGraph().size());
+        assert vectorValues.size() == builder.getGraph().size() : String.format("vector count %d != graph size %d",
+                                                                                vectorValues.size(), builder.getGraph().size());
+        assert postingsMap.keySet().size() == vectorValues.size() : String.format("postings map entry count %d != vector count %d",
+                                                                                  postingsMap.keySet().size(), vectorValues.size());
+        logger.debug("Writing graph with {} rows and {} distinct vectors", postingsMap.values().stream().mapToInt(VectorPostings::size).sum(), vectorValues.size());
+
         try (var vectorsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.VECTOR, indexContext), true);
              var postingsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.POSTING_LISTS, indexContext), true);
              var indexOutputWriter = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.TERMS_DATA, indexContext), true))
         {
+            // write vectors
             long vectorOffset = vectorsOutput.getFilePointer();
             long vectorPosition = vectorValues.write(vectorsOutput.asSequentialWriter());
             long vectorLength = vectorPosition - vectorOffset;
 
+            var deletedOrdinals = new HashSet<Integer>();
+            postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(vectorPostings.getOrdinal()));
+            // remove ordinals that don't have corresponding row ids due to partition/range deletion
+            for (VectorPostings<T> vectorPostings : postingsMap.values())
+            {
+                vectorPostings.computeRowIds(postingTransformer);
+                if (vectorPostings.shouldAppendDeletedOrdinal())
+                    deletedOrdinals.add(vectorPostings.getOrdinal());
+            }
+            // write postings
             long postingsOffset = postingsOutput.getFilePointer();
-            long postingsPosition = new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, postingTransformer, deletedOrdinals);
+            long postingsPosition = new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
             long postingsLength = postingsPosition - postingsOffset;
 
+            // write the graph
             long termsOffset = indexOutputWriter.getFilePointer();
             long termsPosition = new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
             long termsLength = termsPosition - termsOffset;
 
+            // add components to the metadata map
             SegmentMetadata.ComponentMetadataMap metadataMap = new SegmentMetadata.ComponentMetadataMap();
-
             metadataMap.put(IndexComponent.TERMS_DATA, -1, termsOffset, termsLength, Map.of());
             metadataMap.put(IndexComponent.POSTING_LISTS, -1, postingsOffset, postingsLength, Map.of());
-
             Map<String, String> vectorConfigs = Map.of("SEGMENT_ID", ByteBufferUtil.bytesToHex(ByteBuffer.wrap(StringHelper.randomId())));
             metadataMap.put(IndexComponent.VECTOR, -1, vectorOffset, vectorLength, vectorConfigs);
-
             return metadataMap;
         }
     }
@@ -293,5 +384,11 @@ public class CassandraOnHeapHnsw<T>
     private long exactRamBytesUsed()
     {
         return ObjectSizes.measureDeep(this);
+    }
+
+    public enum InvalidVectorBehavior
+    {
+        IGNORE,
+        FAIL
     }
 }

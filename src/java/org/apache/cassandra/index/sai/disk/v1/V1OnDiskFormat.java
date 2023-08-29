@@ -67,7 +67,7 @@ public class V1OnDiskFormat implements OnDiskFormat
     private static final Set<IndexComponent> VECTOR_COMPONENTS = EnumSet.of(IndexComponent.COLUMN_COMPLETION_MARKER,
                                                                             IndexComponent.META,
                                                                             IndexComponent.VECTOR,
-                                                                            IndexComponent.TERMS_DATA, // REVIEWME okay to re-use this for the hnsw graph?
+                                                                            IndexComponent.TERMS_DATA,
                                                                             IndexComponent.POSTING_LISTS);
     private static final Set<IndexComponent> LITERAL_COMPONENTS = EnumSet.of(IndexComponent.COLUMN_COMPLETION_MARKER,
                                                                              IndexComponent.META,
@@ -222,7 +222,7 @@ public class V1OnDiskFormat implements OnDiskFormat
     {
         for (IndexComponent indexComponent : perIndexComponents(indexContext))
         {
-            // TODO: lucene doesn't follow SAI naming patterns and manage its own validation
+            // VSTODO: lucene doesn't follow SAI naming patterns and manage its own validation
             if (!isBuildCompletionMarker(indexComponent) && !(indexContext.isVector()))
             {
                 try (IndexInput input = indexDescriptor.openPerIndexInput(indexComponent, indexContext))

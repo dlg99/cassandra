@@ -69,7 +69,6 @@ public class GuardrailsConfig
     public static final String INDEX_GUARDRAILS_TOTAL_FAILURE_THRESHOLD = Config.PROPERTY_PREFIX + "index.guardrails.total_failure_threshold";
 
     public static final int NO_LIMIT = -1;
-    public static final long NO_LIMIT_LONG = -1L;
     public static final int UNSET = -2;
     public static final int DEFAULT_INDEXES_PER_TABLE_THRESHOLD = 10;
     public static final int DEFAULT_INDEXES_TOTAL_THRESHOLD = 100;
@@ -80,6 +79,8 @@ public class GuardrailsConfig
     public volatile Long collection_size_warn_threshold_in_kb;
     public volatile Long items_per_collection_warn_threshold;
     public volatile Boolean read_before_write_list_operations_enabled;
+    public volatile Integer vector_dimensions_warn_threshold;
+    public volatile Integer vector_dimensions_failure_threshold;
 
     // Legacy 2i guardrail
     public volatile Integer secondary_index_per_table_failure_threshold;
@@ -179,16 +180,19 @@ public class GuardrailsConfig
         // for schema
         enforceDefault(counter_enabled, v -> counter_enabled = v, true, true);
 
-        enforceDefault(fields_per_udt_failure_threshold, v -> fields_per_udt_failure_threshold = v, NO_LIMIT_LONG, 10L);
-        enforceDefault(collection_size_warn_threshold_in_kb, v -> collection_size_warn_threshold_in_kb = v, NO_LIMIT_LONG, 5 * 1024L);
-        enforceDefault(items_per_collection_warn_threshold, v -> items_per_collection_warn_threshold = v, NO_LIMIT_LONG, 20L);
+        enforceDefault(fields_per_udt_failure_threshold, v -> fields_per_udt_failure_threshold = v, -1L, 10L);
+        enforceDefault(collection_size_warn_threshold_in_kb, v -> collection_size_warn_threshold_in_kb = v, -1L, 5 * 1024L);
+        enforceDefault(items_per_collection_warn_threshold, v -> items_per_collection_warn_threshold = v, -1L, 20L);
 
-        enforceDefault(columns_per_table_failure_threshold, v -> columns_per_table_failure_threshold = v, NO_LIMIT_LONG, 50L);
+        enforceDefault(vector_dimensions_warn_threshold, v -> vector_dimensions_warn_threshold = v, -1, -1);
+        enforceDefault(vector_dimensions_failure_threshold, v -> vector_dimensions_failure_threshold = v, 8192, 8192);
+
+        enforceDefault(columns_per_table_failure_threshold, v -> columns_per_table_failure_threshold = v, -1L, 50L);
         enforceDefault(secondary_index_per_table_failure_threshold, v -> secondary_index_per_table_failure_threshold = v, NO_LIMIT, 1);
         enforceDefault(sasi_indexes_per_table_failure_threshold, v -> sasi_indexes_per_table_failure_threshold = v, NO_LIMIT, 0);
         enforceDefault(materialized_view_per_table_failure_threshold, v -> materialized_view_per_table_failure_threshold = v, NO_LIMIT, 2);
-        enforceDefault(tables_warn_threshold, v -> tables_warn_threshold = v, NO_LIMIT_LONG, NO_LIMIT_LONG);
-        enforceDefault(tables_failure_threshold, v -> tables_failure_threshold = v, NO_LIMIT_LONG, NO_LIMIT_LONG);
+        enforceDefault(tables_warn_threshold, v -> tables_warn_threshold = v, -1L, 100L);
+        enforceDefault(tables_failure_threshold, v -> tables_failure_threshold = v, -1L, 200L);
 
         enforceDefault(table_properties_disallowed,
                        v -> table_properties_disallowed = ImmutableSet.copyOf(v),
@@ -246,6 +250,10 @@ public class GuardrailsConfig
 
         validateStrictlyPositiveInteger(items_per_collection_warn_threshold,
                                         "items_per_collection_warn_threshold");
+
+        validateStrictlyPositiveInteger(vector_dimensions_warn_threshold, "vector_dimensions_warn_threshold");
+        validateStrictlyPositiveInteger(vector_dimensions_failure_threshold, "vector_dimensions_failure_threshold");
+        validateWarnLowerThanFail(vector_dimensions_warn_threshold, vector_dimensions_failure_threshold, "vector_dimensions");
 
         validateStrictlyPositiveInteger(tables_warn_threshold, "tables_warn_threshold");
         validateStrictlyPositiveInteger(tables_failure_threshold, "tables_failure_threshold");

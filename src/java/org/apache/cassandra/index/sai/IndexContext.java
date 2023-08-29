@@ -94,7 +94,7 @@ public class IndexContext
     private final String keyspace;
     private final String table;
     private final ColumnMetadata column;
-    private final IndexTarget.Type indexType;;
+    private final IndexTarget.Type indexType;
     private final AbstractType<?> validator;
     private final Memtable.Owner owner;
 
@@ -107,6 +107,7 @@ public class IndexContext
     private final IndexMetrics indexMetrics;
     private final ColumnQueryMetrics columnQueryMetrics;
     private final IndexWriterConfig indexWriterConfig;
+    private final boolean isAnalyzed;
     private final AbstractAnalyzer.AnalyzerFactory analyzerFactory;
     private final AbstractAnalyzer.AnalyzerFactory queryAnalyzerFactory;
     private final PrimaryKey.Factory primaryKeyFactory;
@@ -143,6 +144,7 @@ public class IndexContext
         {
             String fullIndexName = String.format("%s.%s.%s", this.keyspace, this.table, this.config.name);
             this.indexWriterConfig = IndexWriterConfig.fromOptions(fullIndexName, validator, config.options);
+            this.isAnalyzed = AbstractAnalyzer.isAnalyzed(config.options);
             this.analyzerFactory = AbstractAnalyzer.fromOptions(getValidator(), config.options);
             this.queryAnalyzerFactory = AbstractAnalyzer.hasQueryAnalyzer(config.options)
                                         ? AbstractAnalyzer.fromOptionsQueryAnalyzer(getValidator(), config.options)
@@ -152,6 +154,7 @@ public class IndexContext
         else
         {
             this.indexWriterConfig = IndexWriterConfig.emptyConfig();
+            this.isAnalyzed = AbstractAnalyzer.isAnalyzed(Collections.EMPTY_MAP);
             this.analyzerFactory = AbstractAnalyzer.fromOptions(getValidator(), Collections.EMPTY_MAP);
             this.queryAnalyzerFactory = this.analyzerFactory;
             this.segmentCompactionEnabled = true;
@@ -204,7 +207,7 @@ public class IndexContext
     {
         MemtableIndex current = liveMemtables.get(memtable);
 
-        // TODO this is obsolete once we no longer support Java 8
+        // VSTODO this is obsolete once we no longer support Java 8
         // We expect the relevant IndexMemtable to be present most of the time, so only make the
         // call to computeIfAbsent() if it's not. (see https://bugs.openjdk.java.net/browse/JDK-8161372)
         MemtableIndex target = (current != null)
@@ -408,6 +411,9 @@ public class IndexContext
     public boolean supports(Operator op)
     {
         if (op.isLike() || op == Operator.LIKE) return false;
+        // Analyzed columns store the indexed result, so we are unable to compute raw equality.
+        // The only supported operator is ANALYZER_MATCHES.
+        if (isAnalyzed) return op == Operator.ANALYZER_MATCHES;
 
         // ANN is only supported against vectors, and vector indexes only support ANN
         if (column.type instanceof VectorType)
@@ -505,7 +511,7 @@ public class IndexContext
 
     public boolean isVector()
     {
-        //TODO probably move this down to TypeUtils eventually
+        //VSTODO probably move this down to TypeUtils eventually
         return getValidator().isVector();
     }
 

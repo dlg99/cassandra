@@ -50,6 +50,7 @@ public class OnDiskOrdinalsMap
         this.fh = fh;
         try (var reader = fh.createReader())
         {
+            reader.seek(segmentOffset);
             int deletedCount = reader.readInt();
             for (var i = 0; i < deletedCount; i++)
             {
@@ -60,10 +61,11 @@ public class OnDiskOrdinalsMap
             this.size = reader.readInt();
             reader.seek(segmentEnd - 8);
             this.rowOrdinalOffset = reader.readLong();
+            assert rowOrdinalOffset < segmentEnd : "rowOrdinalOffset " + rowOrdinalOffset + " is not less than segmentEnd " + segmentEnd;
         }
-        catch (IOException e)
+        catch (Exception e)
         {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Error initializing OnDiskOrdinalsMap at segment " + segmentOffset, e);
         }
     }
 
@@ -86,17 +88,33 @@ public class OnDiskOrdinalsMap
             Preconditions.checkArgument(vectorOrdinal < size, "vectorOrdinal %s is out of bounds %s", vectorOrdinal, size);
 
             // read index entry
-            reader.seek(ordToRowOffset + 4L + vectorOrdinal * 8L);
-            var offset = reader.readLong();
-            // seek to and read ordinals
-            reader.seek(offset);
-            var postingsSize = reader.readInt();
-            var ordinals = new int[postingsSize];
-            for (var i = 0; i < ordinals.length; i++)
+            try
             {
-                ordinals[i] = reader.readInt();
+                reader.seek(ordToRowOffset + 4L + vectorOrdinal * 8L);
             }
-            return ordinals;
+            catch (Exception e)
+            {
+                throw new RuntimeException(String.format("Error seeking to index offset for ordinal %d with ordToRowOffset %d",
+                                                         vectorOrdinal, ordToRowOffset), e);
+            }
+            var offset = reader.readLong();
+            // seek to and read rowIds
+            try
+            {
+                reader.seek(offset);
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(String.format("Error seeking to rowIds offset for ordinal %d with ordToRowOffset %d",
+                                                         vectorOrdinal, ordToRowOffset), e);
+            }
+            var postingsSize = reader.readInt();
+            var rowIds = new int[postingsSize];
+            for (var i = 0; i < rowIds.length; i++)
+            {
+                rowIds[i] = reader.readInt();
+            }
+            return rowIds;
         }
 
         @Override

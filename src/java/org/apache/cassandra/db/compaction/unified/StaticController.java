@@ -16,14 +16,22 @@
 
 package org.apache.cassandra.db.compaction.unified;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.apache.cassandra.db.compaction.CompactionPick;
 import org.apache.cassandra.db.compaction.UnifiedCompactionStrategy;
 import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.io.util.FileReader;
 import org.apache.cassandra.utils.MonotonicClock;
+import org.apache.cassandra.utils.Overlaps;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 /**
  * The static compaction controller periodically checks the IO costs
@@ -35,95 +43,128 @@ public class StaticController extends Controller
      * The scaling parameters W, one per bucket index and separated by a comma.
      * Higher indexes will use the value of the last index with a W specified.
      */
-    static final String STATIC_SCALING_PARAMETERS_OPTION = "scaling_parameters";
-    static final String STATIC_SCALING_FACTORS_OPTION = "static_scaling_factors";
-    private final static String DEFAULT_STATIC_SCALING_PARAMETERS = System.getProperty(PREFIX + STATIC_SCALING_PARAMETERS_OPTION, "T4");
-
+    private static final String DEFAULT_STATIC_SCALING_PARAMETERS = System.getProperty(PREFIX + SCALING_PARAMETERS_OPTION, "T4");
     private final int[] scalingParameters;
 
     @VisibleForTesting // comp. simulation
     public StaticController(Environment env,
                             int[] scalingParameters,
                             double[] survivalFactors,
-                            long dataSetSizeMB,
-                            int numShards,
-                            long minSSTableSizeMB,
-                            long flushSizeOverrideMB,
+                            long dataSetSize,
+                            long minSSTableSize,
+                            long flushSizeOverride,
+                            long currentFlushSize,
                             double maxSpaceOverhead,
                             int maxSSTablesToCompact,
                             long expiredSSTableCheckFrequency,
                             boolean ignoreOverlapsInExpirationCheck,
-                            boolean l0ShardsEnabled,
                             int baseShardCount,
-                            double targetSStableSize,
-                            OverlapInclusionMethod overlapInclusionMethod)
+                            long targetSStableSize,
+                            double sstableGrowthModifier,
+                            int reservedThreadsPerLevel,
+                            Reservations.Type reservationsType,
+                            Overlaps.InclusionMethod overlapInclusionMethod,
+                            String keyspaceName,
+                            String tableName)
     {
         super(MonotonicClock.preciseTime,
               env,
               survivalFactors,
-              dataSetSizeMB,
-              numShards,
-              minSSTableSizeMB,
-              flushSizeOverrideMB,
+              dataSetSize,
+              minSSTableSize,
+              flushSizeOverride,
+              currentFlushSize,
               maxSpaceOverhead,
               maxSSTablesToCompact,
               expiredSSTableCheckFrequency,
               ignoreOverlapsInExpirationCheck,
-              l0ShardsEnabled,
               baseShardCount,
               targetSStableSize,
+              sstableGrowthModifier,
+              reservedThreadsPerLevel,
+              reservationsType,
               overlapInclusionMethod);
         this.scalingParameters = scalingParameters;
+        this.keyspaceName = keyspaceName;
+        this.tableName = tableName;
     }
 
     static Controller fromOptions(Environment env,
                                   double[] survivalFactors,
-                                  long dataSetSizeMB,
-                                  int numShards,
-                                  long minSSTableSizeMB,
-                                  long flushSizeOverrideMB,
+                                  long dataSetSize,
+                                  long minSSTableSize,
+                                  long flushSizeOverride,
                                   double maxSpaceOverhead,
                                   int maxSSTablesToCompact,
                                   long expiredSSTableCheckFrequency,
                                   boolean ignoreOverlapsInExpirationCheck,
-                                  boolean l0ShardsEnabled,
                                   int baseShardCount,
-                                  double targetSStableSize,
-                                  OverlapInclusionMethod overlapInclusionMethod,
+                                  long targetSStableSize,
+                                  double sstableGrowthModifier,
+                                  int reservedThreadsPerLevel,
+                                  Reservations.Type reservationsType,
+                                  Overlaps.InclusionMethod overlapInclusionMethod,
+                                  String keyspaceName,
+                                  String tableName,
                                   Map<String, String> options)
     {
         int[] scalingParameters;
         if (options.containsKey(STATIC_SCALING_FACTORS_OPTION))
             scalingParameters = parseScalingParameters(options.get(STATIC_SCALING_FACTORS_OPTION));
         else
-            scalingParameters = parseScalingParameters(options.getOrDefault(STATIC_SCALING_PARAMETERS_OPTION, DEFAULT_STATIC_SCALING_PARAMETERS));
+            scalingParameters = parseScalingParameters(options.getOrDefault(SCALING_PARAMETERS_OPTION, DEFAULT_STATIC_SCALING_PARAMETERS));
+        long currentFlushSize = flushSizeOverride;
+
+        File f = getControllerConfigPath(keyspaceName, tableName);
+        try
+        {
+            JSONParser jsonParser = new JSONParser();
+            JSONObject jsonObject = (JSONObject) jsonParser.parse(new FileReader(f));
+            if (jsonObject.get("current_flush_size") != null && flushSizeOverride == 0)
+            {
+                currentFlushSize = (long) jsonObject.get("current_flush_size");
+                logger.debug("Successfully read stored current_flush_size from disk");
+            }
+        }
+        catch (IOException e)
+        {
+            logger.debug("No controller config file found. Using starting value instead.");
+        }
+        catch (ParseException e)
+        {
+            logger.warn("Unable to parse saved flush size. Using starting value instead:", e);
+        }
         return new StaticController(env,
                                     scalingParameters,
                                     survivalFactors,
-                                    dataSetSizeMB,
-                                    numShards,
-                                    minSSTableSizeMB,
-                                    flushSizeOverrideMB,
+                                    dataSetSize,
+                                    minSSTableSize,
+                                    flushSizeOverride,
+                                    currentFlushSize,
                                     maxSpaceOverhead,
                                     maxSSTablesToCompact,
                                     expiredSSTableCheckFrequency,
                                     ignoreOverlapsInExpirationCheck,
-                                    l0ShardsEnabled,
                                     baseShardCount,
                                     targetSStableSize,
-                                    overlapInclusionMethod);
+                                    sstableGrowthModifier,
+                                    reservedThreadsPerLevel,
+                                    reservationsType,
+                                    overlapInclusionMethod,
+                                    keyspaceName,
+                                    tableName);
     }
 
     public static Map<String, String> validateOptions(Map<String, String> options) throws ConfigurationException
     {
-        String parameters = options.remove(STATIC_SCALING_PARAMETERS_OPTION);
+        String parameters = options.remove(SCALING_PARAMETERS_OPTION);
         if (parameters != null)
             parseScalingParameters(parameters);
         String factors = options.remove(STATIC_SCALING_FACTORS_OPTION);
         if (factors != null)
             parseScalingParameters(factors);
         if (parameters != null && factors != null)
-            throw new ConfigurationException(String.format("Either '%s' or '%s' should be used, not both", STATIC_SCALING_PARAMETERS_OPTION, STATIC_SCALING_FACTORS_OPTION));
+            throw new ConfigurationException(String.format("Either '%s' or '%s' should be used, not both", SCALING_PARAMETERS_OPTION, STATIC_SCALING_FACTORS_OPTION));
         return options;
     }
 
@@ -144,14 +185,26 @@ public class StaticController extends Controller
     }
 
     @Override
-    public int getMaxAdaptiveCompactions()
+    public boolean isRecentAdaptive(CompactionPick pick)
+    {
+        return false;
+    }
+
+    @Override
+    public int getMaxRecentAdaptiveCompactions()
     {
         return Integer.MAX_VALUE;
     }
 
     @Override
+    public void storeControllerConfig()
+    {
+        storeOptions(keyspaceName, tableName, scalingParameters, getFlushSizeBytes());
+    }
+
+    @Override
     public String toString()
     {
-        return String.format("Static controller, m: %d, o: %s, scalingParameters: %s, cost: %s", minSstableSizeMB, Arrays.toString(survivalFactors), printScalingParameters(scalingParameters), calculator);
+        return String.format("Static controller, m: %d, o: %s, scalingParameters: %s, cost: %s", minSSTableSize, Arrays.toString(survivalFactors), printScalingParameters(scalingParameters), calculator);
     }
 }

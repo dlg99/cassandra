@@ -25,6 +25,8 @@ import java.util.PrimitiveIterator;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
+import javax.annotation.concurrent.NotThreadSafe;
+
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.index.sai.IndexContext;
 import org.apache.cassandra.index.sai.QueryContext;
@@ -32,8 +34,6 @@ import org.apache.cassandra.index.sai.disk.format.IndexComponent;
 import org.apache.cassandra.index.sai.disk.v1.PerIndexFiles;
 import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
 import org.apache.cassandra.index.sai.disk.v1.postings.ReorderingPostingList;
-import org.apache.cassandra.io.util.FileHandle;
-import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.util.Bits;
@@ -43,29 +43,29 @@ import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
 
 public class CassandraOnDiskHnsw implements AutoCloseable
 {
-    private final int vectorDimension;
-    private final Function<QueryContext, OnDiskVectors> vectorsSupplier;
+    private final Function<QueryContext, VectorsWithCache> vectorsSupplier;
     private final OnDiskOrdinalsMap ordinalsMap;
     private final OnDiskHnswGraph hnsw;
     private final VectorSimilarityFunction similarityFunction;
     private final VectorCache vectorCache;
+
+    private static final int OFFSET_CACHE_MIN_BYTES = 100_000;
 
     public CassandraOnDiskHnsw(SegmentMetadata.ComponentMetadataMap componentMetadatas, PerIndexFiles indexFiles, IndexContext context) throws IOException
     {
         similarityFunction = context.getIndexWriterConfig().getSimilarityFunction();
 
         long vectorsSegmentOffset = componentMetadatas.get(IndexComponent.VECTOR).offset;
-        vectorsSupplier = (qc) -> new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset, qc);
+        vectorsSupplier = (qc) -> new VectorsWithCache(new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset), qc);
 
         SegmentMetadata.ComponentMetadata postingListsMetadata = componentMetadatas.get(IndexComponent.POSTING_LISTS);
         ordinalsMap = new OnDiskOrdinalsMap(indexFiles.postingLists(), postingListsMetadata.offset, postingListsMetadata.length);
 
         SegmentMetadata.ComponentMetadata termsMetadata = componentMetadatas.get(IndexComponent.TERMS_DATA);
-        hnsw = new OnDiskHnswGraph(indexFiles.termsData(), termsMetadata.offset, termsMetadata.length, CassandraRelevantProperties.SAI_HNSW_OFFSET_CACHE_BYTES.getInt());
+        hnsw = new OnDiskHnswGraph(indexFiles.termsData(), termsMetadata.offset, termsMetadata.length, OFFSET_CACHE_MIN_BYTES);
         var mockContext = new QueryContext();
-        try (var vectors = vectorsSupplier.apply(mockContext))
+        try (var vectors = new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset))
         {
-            vectorDimension = vectors.dimension();
             vectorCache = VectorCache.load(hnsw.getView(mockContext), vectors, CassandraRelevantProperties.SAI_HNSW_VECTOR_CACHE_BYTES.getInt());
         }
     }
@@ -83,9 +83,11 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     /**
      * @return Row IDs associated with the topK vectors near the query
      */
-    // TODO make this return something with a size
+    // VSTODO make this return something with a size
     public ReorderingPostingList search(float[] queryVector, int topK, Bits acceptBits, int vistLimit, QueryContext context)
     {
+        CassandraOnHeapHnsw.validateIndexable(queryVector, similarityFunction);
+
         NeighborQueue queue;
         try (var vectors = vectorsSupplier.apply(context); var view = hnsw.getView(context))
         {
@@ -141,7 +143,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
         }
 
         @Override
-        public void close() throws IOException
+        public void close()
         {
             rowIdsView.close();
         }
@@ -168,44 +170,28 @@ public class CassandraOnDiskHnsw implements AutoCloseable
         return ordinalsMap.getOrdinalsView();
     }
 
-    class OnDiskVectors implements RandomAccessVectorValues<float[]>, AutoCloseable
+    @NotThreadSafe
+    class VectorsWithCache implements RandomAccessVectorValues<float[]>, AutoCloseable
     {
-        private final RandomAccessReader reader;
-        private final long segmentOffset;
-        private final int dimension;
-        private final int size;
-        private final float[] vector;
+        private final OnDiskVectors vectors;
         private final QueryContext queryContext;
 
-        public OnDiskVectors(FileHandle fh, long segmentOffset, QueryContext queryContext)
+        public VectorsWithCache(OnDiskVectors vectors, QueryContext queryContext)
         {
+            this.vectors = vectors;
             this.queryContext = queryContext;
-            try
-            {
-                this.reader = fh.createReader();
-                this.segmentOffset = segmentOffset;
-                reader.seek(segmentOffset);
-
-                this.size = reader.readInt();
-                this.dimension = reader.readInt();
-                this.vector = new float[dimension];
-            }
-            catch (IOException e)
-            {
-                throw new RuntimeException(e);
-            }
         }
 
         @Override
         public int size()
         {
-            return size;
+            return vectors.size();
         }
 
         @Override
         public int dimension()
         {
-            return dimension;
+            return vectors.dimension();
         }
 
         @Override
@@ -219,30 +205,18 @@ public class CassandraOnDiskHnsw implements AutoCloseable
                 return cached;
             }
 
-            readVector(i, vector);
-            return vector;
-        }
-
-        void readVector(int i, float[] v) throws IOException
-        {
-            reader.readVectorAt(segmentOffset + 8L + i * dimension * 4L, v);
+            return vectors.vectorValue(i);
         }
 
         @Override
         public RandomAccessVectorValues<float[]> copy()
         {
-            // this is only necessary if we need to build a new graph from this vector source.
-            // (the idea is that if you are re-using float[] between calls, like we are here,
-            //  you can make a copy of the source so you can compare different neighbors' scores
-            //  as you build the graph.)
-            // since we only build new graphs during insert and compaction, when we get the vectors from the source rows,
-            // we don't need to worry about this.
             throw new UnsupportedOperationException();
         }
 
         public void close()
         {
-            reader.close();
+            vectors.close();
         }
     }
 }

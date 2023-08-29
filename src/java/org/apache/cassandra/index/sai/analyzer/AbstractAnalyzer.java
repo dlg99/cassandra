@@ -105,14 +105,7 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
     public static AnalyzerFactory fromOptionsQueryAnalyzer(final AbstractType<?> type, final Map<String, String> options)
     {
         final String json = options.get(LuceneAnalyzer.QUERY_ANALYZER);
-        try
-        {
-            return toAnalyzerFactory(json, type, options);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidRequestException("CQL type " + type.asCQL3Type() + " cannot be analyzed json="+json, ex);
-        }
+        return toAnalyzerFactory(json, type, options);
     }
 
     public static AnalyzerFactory toAnalyzerFactory(String json, final AbstractType<?> type, final Map<String, String> options) //throws Exception
@@ -134,10 +127,18 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
                 }
             };
         }
+        catch (InvalidRequestException ex)
+        {
+            throw ex;
+        }
         catch (Exception ex)
         {
             throw new InvalidRequestException("CQL type " + type.asCQL3Type() + " cannot be analyzed options="+options, ex);
         }
+    }
+
+    public static boolean isAnalyzed(Map<String, String> options) {
+        return options.containsKey(LuceneAnalyzer.INDEX_ANALYZER) || NonTokenizingOptions.hasNonDefaultOptions(options);
     }
 
     public static AnalyzerFactory fromOptions(AbstractType<?> type, Map<String, String> options)
@@ -145,17 +146,10 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
         if (options.containsKey(LuceneAnalyzer.INDEX_ANALYZER))
         {
             String json = options.get(LuceneAnalyzer.INDEX_ANALYZER);
-            try
-            {
-                return toAnalyzerFactory(json, type, options);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidRequestException("CQL type " + type.asCQL3Type() + " cannot be analyzed json="+json, ex);
-            }
+            return toAnalyzerFactory(json, type, options);
         }
 
-        if (hasNonTokenizingOptions(options))
+        if (NonTokenizingOptions.hasNonDefaultOptions(options))
         {
             if (TypeUtil.isIn(type, ANALYZABLE_TYPES))
             {
@@ -170,10 +164,5 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
             }
         }
         return NoOpAnalyzer::new;
-    }
-
-    private static boolean hasNonTokenizingOptions(Map<String, String> options)
-    {
-        return options.get(NonTokenizingOptions.ASCII) != null || options.containsKey(NonTokenizingOptions.CASE_SENSITIVE) || options.containsKey(NonTokenizingOptions.NORMALIZE);
     }
 }

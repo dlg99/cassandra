@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 
@@ -37,6 +38,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.db.Clustering;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.PartitionPosition;
+import org.apache.cassandra.db.marshal.VectorType;
 import org.apache.cassandra.db.memtable.Memtable;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.index.sai.IndexContext;
@@ -53,6 +55,8 @@ import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.bytecomparable.ByteComparable;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 import org.apache.lucene.util.Bits;
+
+import static org.apache.cassandra.index.sai.disk.hnsw.CassandraOnHeapHnsw.InvalidVectorBehavior.FAIL;
 
 public class VectorMemtableIndex implements MemtableIndex
 {
@@ -89,18 +93,11 @@ public class VectorMemtableIndex implements MemtableIndex
         if (value == null || value.remaining() == 0)
             return 0;
 
-        if (minimumKey == null)
-            minimumKey = primaryKey;
-        else if (primaryKey.compareTo(minimumKey) < 0)
-            minimumKey = primaryKey;
-        if (maximumKey == null)
-            maximumKey = primaryKey;
-        else if (primaryKey.compareTo(maximumKey) > 0)
-            maximumKey = primaryKey;
+        updateKeyBounds(primaryKey);
 
         writeCount.increment();
         primaryKeys.add(primaryKey);
-        return graph.add(value, primaryKey);
+        return graph.add(value, primaryKey, FAIL);
     }
 
     @Override
@@ -125,9 +122,13 @@ public class VectorMemtableIndex implements MemtableIndex
         if (different)
         {
             var primaryKey = indexContext.keyFactory().create(key, clustering);
+            // update bounds because only rows with vectors are included in the key bounds,
+            // so if the vector was null before, we won't have included it
+            updateKeyBounds(primaryKey);
+
             // make the changes in this order so we don't have a window where the row is not in the index at all
             if (newRemaining > 0)
-                graph.add(newValue, primaryKey);
+                graph.add(newValue, primaryKey, FAIL);
             if (oldRemaining > 0)
                 graph.remove(oldValue, primaryKey);
 
@@ -137,31 +138,60 @@ public class VectorMemtableIndex implements MemtableIndex
         }
     }
 
+    private void updateKeyBounds(PrimaryKey primaryKey) {
+        if (minimumKey == null)
+            minimumKey = primaryKey;
+        else if (primaryKey.compareTo(minimumKey) < 0)
+            minimumKey = primaryKey;
+        if (maximumKey == null)
+            maximumKey = primaryKey;
+        else if (primaryKey.compareTo(maximumKey) > 0)
+            maximumKey = primaryKey;
+    }
+
     @Override
-    public RangeIterator<PrimaryKey> search(QueryContext context, Expression expr, AbstractBounds<PartitionPosition> keyRange, int limit)
+    public RangeIterator<PrimaryKey> search(QueryContext queryContext, Expression expr, AbstractBounds<PartitionPosition> keyRange, int limit)
     {
         assert expr.getOp() == Expression.Op.ANN : "Only ANN is supported for vector search, received " + expr.getOp();
 
-        var buffer = expr.lower.value.raw;
-        float[] qv = TypeUtil.decomposeVector(indexContext, buffer);
+        float[] qv = expr.lower.value.vector;
 
         Bits bits = null;
-        // if key range doesn't cover full token ring, it's faster to use post-filtering top-k processor instead of ANN due to
-        // slow ordinal to primary keys mapping.
-        if (!graph.isEmpty() && !RangeUtil.coversFullRing(keyRange))
+        if (!RangeUtil.coversFullRing(keyRange))
         {
+            // if left bound is MIN_BOUND or KEY_BOUND, we need to include all token-only PrimaryKeys with same token
+            boolean leftInclusive = keyRange.left.kind() != PartitionPosition.Kind.MAX_BOUND;
+            // if right bound is MAX_BOUND or KEY_BOUND, we need to include all token-only PrimaryKeys with same token
+            boolean rightInclusive = keyRange.right.kind() != PartitionPosition.Kind.MIN_BOUND;
+            // if right token is MAX (Long.MIN_VALUE), there is no upper bound
+            boolean isMaxToken = keyRange.right.getToken().isMinimum(); // max token
+
             PrimaryKey left = indexContext.keyFactory().createTokenOnly(keyRange.left.getToken()); // lower bound
-            PrimaryKey right = indexContext.keyFactory().createTokenOnly(keyRange.right.getToken().nextValidToken()); // upper bound
-            Set<PrimaryKey> resultKeys = primaryKeys.subSet(left, true, right, false);
+            PrimaryKey right = isMaxToken ? null : indexContext.keyFactory().createTokenOnly(keyRange.right.getToken()); // upper bound
+
+            Set<PrimaryKey> resultKeys = isMaxToken ? primaryKeys.tailSet(left, leftInclusive) : primaryKeys.subSet(left, leftInclusive, right, rightInclusive);
+            if (!queryContext.getShadowedPrimaryKeys().isEmpty())
+                resultKeys = resultKeys.stream().filter(pk -> !queryContext.containsShadowedPrimaryKey(pk)).collect(Collectors.toSet());
+
             if (resultKeys.isEmpty())
                 return RangeIterator.emptyKeys();
-            return new ReorderingRangeIterator(new PriorityQueue<>(resultKeys));
+
+            int bruteForceRows = (int)(indexContext.getIndexWriterConfig().getMaximumNodeConnections() * Math.log(graph.size()));
+            if (resultKeys.size() < Math.max(limit, bruteForceRows))
+                return new ReorderingRangeIterator(new PriorityQueue<>(resultKeys));
+            else
+                bits = new KeyRangeFilteringBits(keyRange, queryContext.bitsetForShadowedPrimaryKeys(graph));
+        }
+        else
+        {
+            // partition/range deletion won't trigger index update, so we have to filter shadow primary keys in memtable index
+            bits = queryContext.bitsetForShadowedPrimaryKeys(graph);
         }
 
         var keyQueue = graph.search(qv, limit, bits, Integer.MAX_VALUE);
         if (keyQueue.isEmpty())
             return RangeIterator.emptyKeys();
-        context.recordScores(keyQueue);
+        queryContext.recordScores(keyQueue);
         return new ReorderingRangeIterator(keyQueue);
     }
 
@@ -172,7 +202,8 @@ public class VectorMemtableIndex implements MemtableIndex
         while (iterator.hasNext())
         {
             var key = iterator.next();
-            results.add(key);
+            if (!context.containsShadowedPrimaryKey(key))
+                results.add(key);
         }
 
         int maxBruteForceRows = Math.max(limit, (int)(indexContext.getIndexWriterConfig().getMaximumNodeConnections() * Math.log(graph.size())));
@@ -183,8 +214,7 @@ public class VectorMemtableIndex implements MemtableIndex
             return new ReorderingRangeIterator(new PriorityQueue<>(results));
         }
 
-        ByteBuffer buffer = exp.lower.value.raw;
-        float[] qv = (float[])indexContext.getValidator().getSerializer().deserialize(buffer.duplicate());
+        float[] qv = exp.lower.value.vector;
         var bits = new KeyFilteringBits(results);
         var keyQueue = graph.search(qv, limit, bits, Integer.MAX_VALUE);
         if (keyQueue.isEmpty())
@@ -197,6 +227,8 @@ public class VectorMemtableIndex implements MemtableIndex
     public Iterator<Pair<ByteComparable, Iterator<PrimaryKey>>> iterator(DecoratedKey min, DecoratedKey max)
     {
         // only used by non-vector index
+        // This method is only used when merging an in-memory index with a RowMapping. This is done a different
+        // way with the graph using the writeData method below.
         throw new UnsupportedOperationException();
     }
 
@@ -243,6 +275,35 @@ public class VectorMemtableIndex implements MemtableIndex
         return null;
     }
 
+    private class KeyRangeFilteringBits implements Bits
+    {
+        private final AbstractBounds<PartitionPosition> keyRange;
+        @Nullable
+        private final Bits bits;
+
+        public KeyRangeFilteringBits(AbstractBounds<PartitionPosition> keyRange, @Nullable Bits bits)
+        {
+            this.keyRange = keyRange;
+            this.bits = bits;
+        }
+
+        @Override
+        public boolean get(int ordinal)
+        {
+            if (bits != null && !bits.get(ordinal))
+                return false;
+
+            var keys = graph.keysFromOrdinal(ordinal);
+            return keys.stream().anyMatch(k -> keyRange.contains(k.partitionKey()));
+        }
+
+        @Override
+        public int length()
+        {
+            return graph.size();
+        }
+    }
+
     private class ReorderingRangeIterator extends RangeIterator<PrimaryKey>
     {
         private final PriorityQueue<PrimaryKey> keyQueue;
@@ -254,9 +315,7 @@ public class VectorMemtableIndex implements MemtableIndex
         }
 
         @Override
-        // REVIEWME
-        // (it's inefficient, but is it correct?)
-        // (maybe we can abuse "current" to make it efficient)
+        // VSTODO maybe we can abuse "current" to avoid having to pop and re-add the last skipped key
         protected void performSkipTo(PrimaryKey nextKey)
         {
             PrimaryKey lastSkipped = null;

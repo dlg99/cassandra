@@ -295,9 +295,6 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
 
     private void validateQueryOptions(QueryState queryState, QueryOptions options)
     {
-        if (SchemaConstants.isUserKeyspace(table.keyspace))
-            Guardrails.disallowedWriteConsistencies.ensureAllowed(options.getConsistency(), queryState);
-
         PageSize pageSize = options.getPageSize();
         if (pageSize != null && options.getPageSize().isDefined() && pageSize.getUnit() == PageSize.PageUnit.BYTES)
         {
@@ -1375,7 +1372,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
                 Ordering ordering = entry.getValue();
                 boolean reversed = ordering.direction == Ordering.Direction.DESC;
 
-                // TODO move this to verifyOrderingIsAllowed?
+                // VSTODO move this to verifyOrderingIsAllowed?
                 checkTrue(def.isClusteringColumn(),
                           "Order by is currently only supported on the clustered columns of the PRIMARY KEY, got %s", def.name);
                 while (i != def.position())
@@ -1549,7 +1546,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement
         private final SingleRestriction restriction;
         private final Selection selection;
 
-        // TODO maybe cache in prepared statement
+        // VSTODO maybe cache in prepared statement
         public IndexColumnComparator(SingleRestriction restriction, Selection selection)
         {
             this.restriction = restriction;

@@ -20,6 +20,8 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 
 import java.util.Set;
 
+import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
+
 import org.apache.lucene.util.Bits;
 
 public class BitsUtil
@@ -31,15 +33,28 @@ public class BitsUtil
                : toAccept == null ? new NoDeletedBits(deletedOrdinals) : new NoDeletedIntersectingBits(toAccept, deletedOrdinals);
     }
 
-    private static class NoDeletedBits implements Bits
+    public static <T> Bits bitsIgnoringDeleted(Bits toAccept, NonBlockingHashMapLong<VectorPostings<T>> postings)
     {
-        private final int length;
+        return toAccept == null ? new NoDeletedPostings(postings) : new NoDeletedIntersectingPostings(toAccept, postings);
+    }
+
+    private static abstract class BitsWithoutLength implements Bits
+    {
+        @Override
+        public int length()
+        {
+            // length() is not called on search path
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static class NoDeletedBits extends BitsWithoutLength
+    {
         private final Set<Integer> deletedOrdinals;
 
         private NoDeletedBits(Set<Integer> deletedOrdinals)
         {
             this.deletedOrdinals = deletedOrdinals;
-            this.length = deletedOrdinals.stream().mapToInt(i -> i).max().orElse(0);
         }
 
         @Override
@@ -47,26 +62,17 @@ public class BitsUtil
         {
             return !deletedOrdinals.contains(i);
         }
-
-        @Override
-        public int length()
-        {
-            return length;
-        }
     }
 
-    private static class NoDeletedIntersectingBits implements Bits
+    private static class NoDeletedIntersectingBits extends BitsWithoutLength
     {
         private final Bits toAccept;
         private final Set<Integer> deletedOrdinals;
-        private final int length;
 
         private NoDeletedIntersectingBits(Bits toAccept, Set<Integer> deletedOrdinals)
         {
             this.toAccept = toAccept;
             this.deletedOrdinals = deletedOrdinals;
-            this.length = Math.max(toAccept.length(),
-                                   deletedOrdinals.stream().mapToInt(i -> i).max().orElse(0));
         }
 
         @Override
@@ -74,11 +80,43 @@ public class BitsUtil
         {
             return !deletedOrdinals.contains(i) && toAccept.get(i);
         }
+    }
+
+    private static class NoDeletedPostings<T> extends BitsWithoutLength
+    {
+        private final NonBlockingHashMapLong<VectorPostings<T>> postings;
+
+        public NoDeletedPostings(NonBlockingHashMapLong<VectorPostings<T>> postings)
+        {
+            this.postings = postings;
+        }
 
         @Override
-        public int length()
+        public boolean get(int i)
         {
-            return length;
+            var p = postings.get(i);
+            assert p != null : "No postings for ordinal " + i;
+            return !p.isEmpty();
+        }
+    }
+
+    private static class NoDeletedIntersectingPostings<T> extends BitsWithoutLength
+    {
+        private final Bits toAccept;
+        private final NonBlockingHashMapLong<VectorPostings<T>> postings;
+
+        public NoDeletedIntersectingPostings(Bits toAccept, NonBlockingHashMapLong<VectorPostings<T>> postings)
+        {
+            this.toAccept = toAccept;
+            this.postings = postings;
+        }
+
+        @Override
+        public boolean get(int i)
+        {
+            var p = postings.get(i);
+            assert p != null : "No postings for ordinal " + i;
+            return !p.isEmpty() && toAccept.get(i);
         }
     }
 }
