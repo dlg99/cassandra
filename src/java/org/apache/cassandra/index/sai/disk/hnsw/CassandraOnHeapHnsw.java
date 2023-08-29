@@ -299,7 +299,7 @@ public class CassandraOnHeapHnsw<T>
                                                        VectorEncoding.FLOAT32,
                                                        similarityFunction,
                                                        builder.getGraph(),
-                                                       BitsUtil.bitsIgnoringDeleted(toAccept, deletedOrdinals),
+                                                       hasDeletions ? BitsUtil.bitsIgnoringDeleted(toAccept, postingsByOrdinal) : toAccept,
                                                        visitedLimit);
         }
         catch (IOException e)
