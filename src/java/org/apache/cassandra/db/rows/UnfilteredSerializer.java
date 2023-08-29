@@ -21,6 +21,7 @@ import java.io.IOException;
 
 import net.nicoulaj.compilecommand.annotations.Inline;
 import org.apache.cassandra.db.marshal.ByteArrayAccessor;
+import org.apache.cassandra.io.util.TrackedDataInputPlus;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.rows.Row.Deletion;
@@ -578,7 +579,8 @@ public class UnfilteredSerializer
 
             if (header.isForSSTable())
             {
-                in.readUnsignedVInt(); // Skip row size
+                int rowSize = Math.toIntExact(undecoratedInput.readUnsignedVInt());
+                in = new TrackedDataInputPlus(undecoratedInput, rowSize);
                 in.readUnsignedVInt(); // previous unfiltered size
             }
 
