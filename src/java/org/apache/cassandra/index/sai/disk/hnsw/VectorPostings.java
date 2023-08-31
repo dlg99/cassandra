@@ -19,6 +19,7 @@
 package org.apache.cassandra.index.sai.disk.hnsw;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
@@ -79,6 +80,26 @@ public class VectorPostings<T>
 
         rowIds = ids;
     }
+
+    public void computeRowIdsWithRemapping(Function<T, Integer> postingTransformer,
+                                           Map<Integer, Integer> remapping, int targetRowId)
+    {
+        Preconditions.checkState(rowIds == null);
+
+        IntArrayList ids = new IntArrayList(postings.size(), -1);
+        for (T key : postings)
+        {
+            int rowId = postingTransformer.apply(key);
+            // partition deletion and range deletion won't trigger index update. There is no row id for given key during flush
+            if (rowId >= 0)
+            {
+                ids.add(remapping.computeIfAbsent(rowId, k -> targetRowId));
+            }
+        }
+
+        rowIds = ids;
+    }
+
 
     /**
      * @return rowIds corresponding to the <T> keys in this postings list.

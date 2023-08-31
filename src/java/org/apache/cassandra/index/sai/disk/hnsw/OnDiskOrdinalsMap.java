@@ -21,6 +21,7 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -72,6 +73,13 @@ public class OnDiskOrdinalsMap
     public RowIdsView getRowIdsView()
     {
         return new RowIdsView();
+    }
+
+    public int numDeleted() {
+        return deletedOrdinals.size();
+    }
+    public int estimateHappyPathNumRows() {
+        return Math.toIntExact((segmentEnd - 8 - rowOrdinalOffset) / 8);
     }
 
     public Bits ignoringDeleted(Bits acceptBits)

@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -305,9 +306,16 @@ public class CassandraOnHeapHnsw<T>
             var deletedOrdinals = new HashSet<Integer>();
             postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(vectorPostings.getOrdinal()));
             // remove ordinals that don't have corresponding row ids due to partition/range deletion
+            final Map<Integer, Integer> remapping = new HashMap<>(postingsMap.size());
+            int targetRowId = 0;
             for (VectorPostings<T> vectorPostings : postingsMap.values())
             {
-                vectorPostings.computeRowIds(postingTransformer);
+                if (vectorPostings.size() != postingsMap.size()) {
+                    vectorPostings.computeRowIds(postingTransformer);
+                } else
+                {
+                    vectorPostings.computeRowIdsWithRemapping(postingTransformer, remapping, targetRowId++);
+                }
                 if (vectorPostings.shouldAppendDeletedOrdinal())
                     deletedOrdinals.add(vectorPostings.getOrdinal());
             }

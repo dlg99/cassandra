@@ -49,11 +49,14 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     private final VectorSimilarityFunction similarityFunction;
     private final VectorCache vectorCache;
 
+    private final boolean isVectorIndexContext;
+
     private static final int OFFSET_CACHE_MIN_BYTES = 100_000;
 
     public CassandraOnDiskHnsw(SegmentMetadata.ComponentMetadataMap componentMetadatas, PerIndexFiles indexFiles, IndexContext context) throws IOException
     {
         similarityFunction = context.getIndexWriterConfig().getSimilarityFunction();
+        isVectorIndexContext = context.isVector();
 
         long vectorsSegmentOffset = componentMetadatas.get(IndexComponent.VECTOR).offset;
         vectorsSupplier = (qc) -> new VectorsWithCache(new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset), qc);
@@ -63,6 +66,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
 
         SegmentMetadata.ComponentMetadata termsMetadata = componentMetadatas.get(IndexComponent.TERMS_DATA);
         hnsw = new OnDiskHnswGraph(indexFiles.termsData(), termsMetadata.offset, termsMetadata.length, OFFSET_CACHE_MIN_BYTES);
+
         var mockContext = new QueryContext();
         try (var vectors = new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset))
         {
@@ -111,12 +115,16 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     {
         private final NeighborQueue queue;
         private final OnDiskOrdinalsMap.RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
+        private final boolean allowShortcut;
 
         private PrimitiveIterator.OfInt segmentRowIdIterator = IntStream.empty().iterator();
 
         public RowIdIterator(NeighborQueue queue)
         {
             this.queue = queue;
+            this.allowShortcut = isVectorIndexContext
+                                 && ordinalsMap.numDeleted() == 0
+                                 && queue.size() == ordinalsMap.estimateHappyPathNumRows();
         }
 
         @Override
@@ -125,7 +133,14 @@ public class CassandraOnDiskHnsw implements AutoCloseable
                 try
                 {
                     var ordinal = queue.pop();
-                    segmentRowIdIterator = Arrays.stream(rowIdsView.getSegmentRowIdsMatching(ordinal)).iterator();
+
+                    if (allowShortcut)
+                    {
+                        segmentRowIdIterator = IntStream.of(ordinal).iterator();
+                    } else
+                    {
+                        segmentRowIdIterator = Arrays.stream(rowIdsView.getSegmentRowIdsMatching(ordinal)).iterator();
+                    }
                 }
                 catch (IOException e)
                 {
@@ -152,9 +167,11 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     private ReorderingPostingList annRowIdsToPostings(NeighborQueue queue) throws IOException
     {
         int originalSize = queue.size();
+
         try (var iterator = new RowIdIterator(queue))
         {
-            return new ReorderingPostingList(iterator, originalSize);
+            var res = new ReorderingPostingList(iterator, originalSize);
+            return res;
         }
     }
 
