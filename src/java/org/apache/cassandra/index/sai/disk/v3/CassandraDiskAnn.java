@@ -47,6 +47,8 @@ import org.apache.cassandra.index.sai.disk.v1.postings.ReorderingPostingList;
 import org.apache.cassandra.index.sai.disk.vector.CassandraOnHeapGraph;
 import org.apache.cassandra.index.sai.disk.vector.JVectorLuceneOnDiskGraph;
 import org.apache.cassandra.index.sai.disk.vector.OnDiskOrdinalsMap;
+import org.apache.cassandra.index.sai.disk.vector.OrdinalsView;
+import org.apache.cassandra.index.sai.disk.vector.RowIdsView;
 
 public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
 {
@@ -141,7 +143,7 @@ public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
     private class RowIdIterator implements PrimitiveIterator.OfInt, AutoCloseable
     {
         private final Iterator<NodeScore> it;
-        private final OnDiskOrdinalsMap.RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
+        private final RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
 
         private OfInt segmentRowIdIterator = IntStream.empty().iterator();
 
@@ -196,7 +198,7 @@ public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
     }
 
     @Override
-    public OnDiskOrdinalsMap.OrdinalsView getOrdinalsView()
+    public OrdinalsView getOrdinalsView()
     {
         return ordinalsMap.getOrdinalsView();
     }

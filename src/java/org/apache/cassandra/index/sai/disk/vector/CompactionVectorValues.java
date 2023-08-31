@@ -74,13 +74,14 @@ public class CompactionVectorValues implements RamAwareVectorValues
         return this;
     }
 
-    public long write(SequentialWriter writer) throws IOException
+    public long write(SequentialWriter writer, java.util.function.Function<Integer, Integer> ordinalMapper) throws IOException
     {
         writer.writeInt(size());
         writer.writeInt(dimension());
 
         for (var i = 0; i < size(); i++) {
-            var bb = values.get(i);
+            int ord = ordinalMapper.apply(i);
+            var bb = values.get(ord);
             assert bb != null : "null vector at index " + i + " of " + size();
             writer.write(bb);
         }

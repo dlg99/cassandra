@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.index.sai.disk.vector;
 
+import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -33,14 +34,19 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.github.jbellis.jvector.disk.CompressedVectors;
-import com.github.jbellis.jvector.disk.OnDiskGraphIndex;
+import com.github.jbellis.jvector.disk.Io;
+import com.github.jbellis.jvector.graph.GraphIndex;
 import com.github.jbellis.jvector.graph.GraphIndexBuilder;
 import com.github.jbellis.jvector.graph.GraphSearcher;
+import com.github.jbellis.jvector.graph.NodesIterator;
+import com.github.jbellis.jvector.graph.RandomAccessVectorValues;
 import com.github.jbellis.jvector.pq.ProductQuantization;
 import com.github.jbellis.jvector.vector.VectorEncoding;
 import com.github.jbellis.jvector.vector.VectorSimilarityFunction;
@@ -283,11 +289,6 @@ public class CassandraOnHeapGraph<T>
              var postingsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.POSTING_LISTS, indexContext), true);
              var indexOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.TERMS_DATA, indexContext), true))
         {
-            // compute and write PQ
-            long pqOffset = pqOutput.getFilePointer();
-            long pqPosition = writePQ(pqOutput.asSequentialWriter());
-            long pqLength = pqPosition - pqOffset;
-
             var deletedOrdinals = new HashSet<Integer>();
             postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(vectorPostings.getOrdinal()));
             // remove ordinals that don't have corresponding row ids due to partition/range deletion
@@ -297,15 +298,66 @@ public class CassandraOnHeapGraph<T>
                 if (vectorPostings.shouldAppendDeletedOrdinal())
                     deletedOrdinals.add(vectorPostings.getOrdinal());
             }
+
+            // map of existing ordinal to rowId (aka new ordinal if remapping is possible)
+            BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
+            boolean canFastFindRows = false;
+            if (deletedOrdinals.size() == 0) {
+                canFastFindRows = true;
+                int minRow = Integer.MAX_VALUE;
+                int maxRow = Integer.MIN_VALUE;
+                for (VectorPostings<T> vectorPostings : postingsMap.values())
+                {
+                    if (vectorPostings.getRowIds().size() != 1)
+                    {
+                        canFastFindRows = false;
+                        ordinalMap.clear();
+                        break;
+                    }
+                    int rowId = vectorPostings.getRowIds().getInt(0);
+                    int ordinal = vectorPostings.getOrdinal();
+                    minRow = Math.min(minRow, rowId);
+                    maxRow = Math.max(maxRow, rowId);
+                    if(rowId != ordinal)
+                    {
+                        if (ordinalMap.containsKey(ordinal) && ordinalMap.get(ordinal) != rowId)
+                        {
+                            canFastFindRows = false;
+                            ordinalMap.clear();
+                            break;
+                        } else {
+                            ordinalMap.put(ordinal, rowId);
+                        }
+                    }
+                }
+
+                if (canFastFindRows && (minRow != 0 || maxRow != postingsMap.values().size() - 1))
+                {
+                    canFastFindRows = false;
+                    ordinalMap.clear();
+                }
+            }
+
+            Function<Integer, Integer> ordinalMapper = ordinalMap.isEmpty()
+                                                          ? x -> x
+                                                          : x -> ordinalMap.getOrDefault(x, x);
+
+            // compute and write PQ
+            long pqOffset = pqOutput.getFilePointer();
+            long pqPosition = writePQ(pqOutput.asSequentialWriter(), ordinalMapper);
+            long pqLength = pqPosition - pqOffset;
+
             // write postings
             long postingsOffset = postingsOutput.getFilePointer();
-            long postingsPosition = new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
+            long postingsPosition = canFastFindRows
+                                    ? new VectorPostingsWriter<T>(ordinalMap).writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals)
+                                    : new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
             long postingsLength = postingsPosition - postingsOffset;
 
             // complete (internal clean up) and write the graph
             builder.complete();
             long termsOffset = indexOutput.getFilePointer();
-            OnDiskGraphIndex.write(builder.getGraph(), vectorValues, indexOutput.asSequentialWriter());
+            writeGraph(builder.getGraph(), vectorValues, indexOutput.asSequentialWriter(), ordinalMapper);
             long termsLength = indexOutput.getFilePointer() - termsOffset;
 
             // add components to the metadata map
@@ -318,24 +370,67 @@ public class CassandraOnHeapGraph<T>
         }
     }
 
-    private long writePQ(SequentialWriter writer) throws IOException
+    // taken and adopted from com.github.jbellis.jvector.disk.OnDiskGraphIndex
+    private static <T> void writeGraph(GraphIndex<T> graph,
+                                       RandomAccessVectorValues<T> vectors,
+                                       DataOutput out,
+                                       Function<Integer, Integer> ordinalMapper) throws IOException {
+        assert graph.size() == vectors.size() : "graph size " + graph.size() + " != vectors size " + vectors.size();
+
+        GraphIndex.View<T> view = graph.getView();
+        out.writeInt(graph.size());
+        out.writeInt(vectors.dimension());
+        out.writeInt(ordinalMapper.apply(view.entryNode()));
+        out.writeInt(graph.maxEdgesPerNode());
+
+        for(int node = 0; node < graph.size(); ++node) {
+            out.writeInt(node);
+            int originalNode = ordinalMapper.apply(node);
+            Io.writeFloats(out, (float[])vectors.vectorValue(originalNode));
+            NodesIterator neighbors = view.getNeighborsIterator(originalNode);
+            out.writeInt(neighbors.size());
+
+            int n;
+            for(n = 0; n < neighbors.size(); ++n) {
+                out.writeInt(ordinalMapper.apply(neighbors.nextInt()));
+            }
+
+            assert !neighbors.hasNext();
+
+            while(n < graph.maxEdgesPerNode()) {
+                out.writeInt(-1);
+                ++n;
+            }
+        }
+    }
+
+    private long writePQ(SequentialWriter writer, Function<Integer, Integer> ordinalMapper) throws IOException
     {
         // don't bother with PQ if there are fewer than 1K vectors
         int M = vectorValues.dimension() / 2;
         writer.writeBoolean(vectorValues.size() >= 1024);
         if (vectorValues.size() < 1024)
         {
-            logger.debug("Skipping PQ for only {} vectors", vectorValues.size());
+            if (logger.isDebugEnabled())
+            {
+                logger.debug("Skipping PQ for only {} vectors", vectorValues.size());
+            }
             return writer.position();
         }
 
-        logger.debug("Computing PQ for {} vectors", vectorValues.size());
+        if (logger.isDebugEnabled())
+        {
+            logger.debug("Computing PQ for {} vectors", vectorValues.size());
+        }
         // hack to only do this one at a time during compaction since we're reading a ton of vectors into memory
         var synchronizeOn = vectorValues instanceof ConcurrentVectorValues ? this : CassandraOnHeapGraph.class;
         synchronized (synchronizeOn)
         {
             // collect vectors into a list
-            var vectors = IntStream.range(0, vectorValues.size()).mapToObj(vectorValues::vectorValue).collect(Collectors.toList());
+            var vectors = IntStream.range(0, vectorValues.size())
+                                   .map(ordinalMapper::apply)
+                                   .mapToObj(vectorValues::vectorValue)
+                                   .collect(Collectors.toList());
             // train PQ and encode
             var pq = new ProductQuantization(vectors, M, false);
             var encoded = vectors.stream().parallel().map(pq::encode).collect(Collectors.toList());
