@@ -20,10 +20,7 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 
 import java.io.IOException;
 import java.util.HashMap;
-import java.util.function.Function;
 
-import com.google.common.collect.BiMap;
-import com.google.common.collect.ImmutableBiMap;
 import org.slf4j.Logger;
 
 import org.apache.cassandra.index.sai.disk.io.IndexOutputWriter;
@@ -37,29 +34,10 @@ public class HnswGraphWriter
     private final ExtendedHnswGraph hnsw;
     private final int maxOrdinal;
 
-    private final boolean useOrdinalsMapper;
-
-    private final Function<Integer, Integer> ordinalsMapper;
-    private final Function<Integer, Integer> reverseOrdinalsMapper;
-
-
     public HnswGraphWriter(ExtendedHnswGraph hnsw)
     {
         this.hnsw = hnsw;
         this.maxOrdinal = hnsw.size();
-        this.useOrdinalsMapper = false;
-
-        this.ordinalsMapper = x -> x;
-        this.reverseOrdinalsMapper = x -> x;
-    }
-
-    public HnswGraphWriter(BiMap<Integer, Integer> newOrdinals, ExtendedHnswGraph hnsw)
-    {
-        this.hnsw = hnsw;
-        this.maxOrdinal = hnsw.size();
-        this.useOrdinalsMapper = true;
-        this.ordinalsMapper = x -> newOrdinals.getOrDefault(x, x);
-        this.reverseOrdinalsMapper = x -> newOrdinals.inverse().getOrDefault(x, x);
     }
 
     private long levelSize(int level) throws IOException
@@ -90,12 +68,9 @@ public class HnswGraphWriter
         // hnsw info we want to be able to provide without reading the whole thing
         out.writeInt(hnsw.size());
         out.writeInt(hnsw.numLevels());
-        out.writeInt(ordinalsMapper.apply(hnsw.entryNode()));
-        if (logger.isDebugEnabled())
-        {
-            logger.debug("size: {}, level count: {}, entry node: {} ({})",
-                         hnsw.size(), hnsw.numLevels(), hnsw.entryNode(), ordinalsMapper.apply(hnsw.entryNode()));
-        }
+        out.writeInt(hnsw.entryNode());
+        logger.debug("size: {}, level count: {}, entry node: {}",
+                     hnsw.size(), hnsw.numLevels(), hnsw.entryNode());
 
         long firstLevelOffset = segmentOffset
                                 + 12 // header
@@ -118,9 +93,7 @@ public class HnswGraphWriter
             var levelOffset = out.position();
             assert levelOffset == levelOffsets.get(level) : String.format("level %s offset mismatch: %s actual vs %s expected", level, levelOffset, levelOffsets.get(level));
             // write the number of nodes on the level
-            var sortedNodes = useOrdinalsMapper
-                              ? ExtendedHnswGraph.getSortedNodes(hnsw, level, ordinalsMapper)
-                              : ExtendedHnswGraph.getSortedNodes(hnsw, level);
+            var sortedNodes = ExtendedHnswGraph.getSortedNodes(hnsw, level);
             out.writeInt(sortedNodes.length);
             logger.debug("L{}: {} nodes", level, sortedNodes.length);
 
@@ -132,21 +105,20 @@ public class HnswGraphWriter
                 out.writeInt(node);
                 out.writeLong(nextNodeOffset);
                 nodeOffsets.put(node, nextNodeOffset);
-                nextNodeOffset += neighborSize(level, reverseOrdinalsMapper.apply(node));
+                nextNodeOffset += neighborSize(level, node);
             }
 
             // for each node on the level, write its neighbors
             for (var node : sortedNodes)
             {
                 assert out.position() == nodeOffsets.get(node) : String.format("level %s node %s offset mismatch: %s actual vs %s expected", level, node, out.position(), nodeOffsets.get(node));
-                var n = hnsw.getNeighborCount(level, reverseOrdinalsMapper.apply(node));
+                var n = hnsw.getNeighborCount(level, node);
                 assertOrdinalValid(n);
                 out.writeInt(n);
-                hnsw.seek(level, reverseOrdinalsMapper.apply(node));
+                hnsw.seek(level, node);
                 int neighborId;
                 while ((neighborId = hnsw.nextNeighbor()) != NO_MORE_DOCS)
                 {
-                    neighborId = ordinalsMapper.apply(neighborId);
                     assertOrdinalValid(neighborId);
                     out.writeInt(neighborId);
                 }
@@ -162,7 +134,6 @@ public class HnswGraphWriter
 
     private void assertOrdinalValid(int node)
     {
-        node = reverseOrdinalsMapper.apply(node);
         assert 0 <= node && node < maxOrdinal : String.format("node %s is out of bounds: %s", node, maxOrdinal);
     }
 }
