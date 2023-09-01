@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -32,6 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -294,7 +295,7 @@ public class CassandraOnHeapHnsw<T>
                                                                                   postingsMap.keySet().size(), vectorValues.size());
         logger.debug("Writing graph with {} rows and {} distinct vectors", postingsMap.values().stream().mapToInt(VectorPostings::size).sum(), vectorValues.size());
 
-        final Map<Integer, Integer> newOrdinals = new HashMap<>();
+        final BiMap<Integer, Integer> newOrdinals = HashBiMap.create();
         boolean doRemaping = !postingsMap.values().stream().anyMatch(x -> x. getPostings().size() > 1);
         for (var x: postingsMap.values()) {
             if (!doRemaping) {
@@ -304,21 +305,16 @@ public class CassandraOnHeapHnsw<T>
                 int rowId = postingTransformer.apply(y);
                 int ordinal = x.getOrdinal();
 
-                if (newOrdinals.containsKey(ordinal)) {
-                    if (newOrdinals.get(ordinal) == rowId) {
-                        continue;
-                    }
-                    doRemaping = false;
-                    break;
-                } else {
-                    newOrdinals.put(ordinal, rowId);
+                if (rowId == ordinal) {
+                    continue;
                 }
+                newOrdinals.put(ordinal, rowId);
             }
         }
 
         final Function<Integer, Integer> ordinalsMapper;
         if (doRemaping) {
-            ordinalsMapper = ord -> newOrdinals.get(ord);
+            ordinalsMapper = ord -> newOrdinals.getOrDefault(ord, ord);
         } else {
             ordinalsMapper = ord -> ord;
         }
@@ -349,7 +345,9 @@ public class CassandraOnHeapHnsw<T>
 
             // write the graph
             long termsOffset = indexOutputWriter.getFilePointer();
-            long termsPosition = new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
+            long termsPosition = doRemaping
+                                 ? new HnswGraphWriter(newOrdinals, builder.getGraph()).write(indexOutputWriter)
+                                 : new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
             long termsLength = termsPosition - termsOffset;
 
             // add components to the metadata map
