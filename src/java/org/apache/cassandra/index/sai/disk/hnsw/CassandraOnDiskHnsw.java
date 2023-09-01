@@ -49,14 +49,11 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     private final VectorSimilarityFunction similarityFunction;
     private final VectorCache vectorCache;
 
-    private final boolean isVectorIndexContext;
-
     private static final int OFFSET_CACHE_MIN_BYTES = 100_000;
 
     public CassandraOnDiskHnsw(SegmentMetadata.ComponentMetadataMap componentMetadatas, PerIndexFiles indexFiles, IndexContext context) throws IOException
     {
         similarityFunction = context.getIndexWriterConfig().getSimilarityFunction();
-        isVectorIndexContext = context.isVector();
 
         long vectorsSegmentOffset = componentMetadatas.get(IndexComponent.VECTOR).offset;
         vectorsSupplier = (qc) -> new VectorsWithCache(new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset), qc);
@@ -115,15 +112,12 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     {
         private final NeighborQueue queue;
         private final OnDiskOrdinalsMap.RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
-        private final boolean allowShortcut;
 
         private PrimitiveIterator.OfInt segmentRowIdIterator = IntStream.empty().iterator();
 
         public RowIdIterator(NeighborQueue queue)
         {
             this.queue = queue;
-            this.allowShortcut = isVectorIndexContext
-                                 && ordinalsMap.numDeleted() + queue.size() == ordinalsMap.estimateHappyPathNumRows();
         }
 
         @Override
@@ -132,14 +126,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
                 try
                 {
                     var ordinal = queue.pop();
-
-                    if (allowShortcut)
-                    {
-                        segmentRowIdIterator = IntStream.of(ordinal).iterator();
-                    } else
-                    {
-                        segmentRowIdIterator = Arrays.stream(rowIdsView.getSegmentRowIdsMatching(ordinal)).iterator();
-                    }
+                    segmentRowIdIterator = Arrays.stream(rowIdsView.getSegmentRowIdsMatching(ordinal)).iterator();
                 }
                 catch (IOException e)
                 {

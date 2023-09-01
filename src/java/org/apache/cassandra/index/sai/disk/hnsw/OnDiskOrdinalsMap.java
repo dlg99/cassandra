@@ -21,7 +21,6 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -43,6 +42,8 @@ public class OnDiskOrdinalsMap
     private final long rowOrdinalOffset;
     private final Set<Integer> deletedOrdinals;
 
+    private boolean rowIdsMatchOrdinals = false;
+
     public OnDiskOrdinalsMap(FileHandle fh, long segmentOffset, long segmentLength)
     {
         deletedOrdinals = new HashSet<>();
@@ -55,7 +56,13 @@ public class OnDiskOrdinalsMap
             int deletedCount = reader.readInt();
             for (var i = 0; i < deletedCount; i++)
             {
-                deletedOrdinals.add(reader.readInt());
+                int ordinal = reader.readInt();
+                if (ordinal == -1) {
+                    assert deletedCount == 1;
+                    rowIdsMatchOrdinals = true;
+                    break;
+                }
+                deletedOrdinals.add(ordinal);
             }
 
             this.ordToRowOffset = reader.getFilePointer();
@@ -94,6 +101,10 @@ public class OnDiskOrdinalsMap
         public int[] getSegmentRowIdsMatching(int vectorOrdinal) throws IOException
         {
             Preconditions.checkArgument(vectorOrdinal < size, "vectorOrdinal %s is out of bounds %s", vectorOrdinal, size);
+
+            if (rowIdsMatchOrdinals) {
+                return new int[] { vectorOrdinal };
+            }
 
             // read index entry
             try
