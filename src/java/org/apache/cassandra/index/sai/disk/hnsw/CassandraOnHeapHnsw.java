@@ -294,6 +294,35 @@ public class CassandraOnHeapHnsw<T>
                                                                                   postingsMap.keySet().size(), vectorValues.size());
         logger.debug("Writing graph with {} rows and {} distinct vectors", postingsMap.values().stream().mapToInt(VectorPostings::size).sum(), vectorValues.size());
 
+        final Map<Integer, Integer> newOrdinals = new HashMap<>();
+        boolean doRemaping = !postingsMap.values().stream().anyMatch(x -> x. getPostings().size() > 1);
+        for (var x: postingsMap.values()) {
+            if (!doRemaping) {
+                break;
+            }
+            for (var y: x.getPostings()) {
+                int rowId = postingTransformer.apply(y);
+                int ordinal = x.getOrdinal();
+
+                if (newOrdinals.containsKey(ordinal)) {
+                    if (newOrdinals.get(ordinal) == rowId) {
+                        continue;
+                    }
+                    doRemaping = false;
+                    break;
+                } else {
+                    newOrdinals.put(ordinal, rowId);
+                }
+            }
+        }
+
+        final Function<Integer, Integer> ordinalsMapper;
+        if (doRemaping) {
+            ordinalsMapper = ord -> newOrdinals.get(ord);
+        } else {
+            ordinalsMapper = ord -> ord;
+        }
+
         try (var vectorsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.VECTOR, indexContext), true);
              var postingsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.POSTING_LISTS, indexContext), true);
              var indexOutputWriter = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.TERMS_DATA, indexContext), true))
@@ -304,20 +333,14 @@ public class CassandraOnHeapHnsw<T>
             long vectorLength = vectorPosition - vectorOffset;
 
             var deletedOrdinals = new HashSet<Integer>();
-            postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(vectorPostings.getOrdinal()));
+            postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(
+                ordinalsMapper.apply(vectorPostings.getOrdinal())));
             // remove ordinals that don't have corresponding row ids due to partition/range deletion
-            final Map<Integer, Integer> remapping = new HashMap<>(postingsMap.size());
-            int targetRowId = 0;
             for (VectorPostings<T> vectorPostings : postingsMap.values())
             {
-                if (vectorPostings.size() != postingsMap.size()) {
-                    vectorPostings.computeRowIds(postingTransformer);
-                } else
-                {
-                    vectorPostings.computeRowIdsWithRemapping(postingTransformer, remapping, targetRowId++);
-                }
+                vectorPostings.computeRowIds(postingTransformer);
                 if (vectorPostings.shouldAppendDeletedOrdinal())
-                    deletedOrdinals.add(vectorPostings.getOrdinal());
+                    deletedOrdinals.add(ordinalsMapper.apply(vectorPostings.getOrdinal()));
             }
             // write postings
             long postingsOffset = postingsOutput.getFilePointer();

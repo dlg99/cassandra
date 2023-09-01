@@ -123,8 +123,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
         {
             this.queue = queue;
             this.allowShortcut = isVectorIndexContext
-                                 && ordinalsMap.numDeleted() == 0
-                                 && queue.size() == ordinalsMap.estimateHappyPathNumRows();
+                                 && ordinalsMap.numDeleted() + queue.size() == ordinalsMap.estimateHappyPathNumRows();
         }
 
         @Override
@@ -170,8 +169,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
 
         try (var iterator = new RowIdIterator(queue))
         {
-            var res = new ReorderingPostingList(iterator, originalSize);
-            return res;
+            return new ReorderingPostingList(iterator, originalSize);
         }
     }
 
