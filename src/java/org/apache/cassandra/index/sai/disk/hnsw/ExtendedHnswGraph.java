@@ -20,6 +20,7 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.function.Function;
 
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.lucene.util.hnsw.HnswGraph;
@@ -55,6 +56,27 @@ public abstract class ExtendedHnswGraph extends HnswGraph
 
         for(var n = 0; nodesOnLevel.hasNext(); n++) {
             sortedNodes[n] = nodesOnLevel.nextInt();
+        }
+
+        Arrays.sort(sortedNodes);
+        return sortedNodes;
+    }
+
+    public static int[] getSortedNodes(ExtendedHnswGraph hnsw, int level, Function<Integer, Integer> ordinalsMapper)
+    {
+        final NodesIterator nodesOnLevel;
+        try
+        {
+            nodesOnLevel = hnsw.getNodesOnLevel(level);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
+        }
+        var sortedNodes = new int[nodesOnLevel.size()];
+
+        for(var n = 0; nodesOnLevel.hasNext(); n++) {
+            sortedNodes[n] = ordinalsMapper.apply(nodesOnLevel.nextInt());
         }
 
         Arrays.sort(sortedNodes);

@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
 import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -313,36 +315,59 @@ public class CassandraOnHeapHnsw<T>
                     deletedOrdinals.add(vectorPostings.getOrdinal());
             }
 
+            BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
+            boolean canFastFindRows = false;
             if (deletedOrdinals.size() == 0) {
-                boolean canFastFindRows = true;
+                canFastFindRows = true;
+                int minRow = Integer.MAX_VALUE;
+                int maxRow = Integer.MIN_VALUE;
                 for (VectorPostings<T> vectorPostings : postingsMap.values())
                 {
                     if (vectorPostings.getRowIds().size() != 1)
                     {
                         canFastFindRows = false;
+                        ordinalMap.clear();
                         break;
                     }
-                    if(vectorPostings.getRowIds().getInt(0) != vectorPostings.getOrdinal())
+                    int rowId = vectorPostings.getRowIds().getInt(0);
+                    int ordinal = vectorPostings.getOrdinal();
+                    minRow = Math.min(minRow, rowId);
+                    maxRow = Math.max(maxRow, rowId);
+                    if(rowId != ordinal)
                     {
-                        canFastFindRows = false;
-                        break;
+                        if (ordinalMap.containsKey(ordinal) && ordinalMap.get(ordinal) != rowId)
+                        {
+                            canFastFindRows = false;
+                            ordinalMap.clear();
+                            break;
+                        } else {
+                            ordinalMap.put(ordinal, rowId);
+                        }
                     }
                 }
 
-                if (canFastFindRows == true)
+                if (canFastFindRows && (minRow != 0 || maxRow != postingsMap.values().size() - 1))
                 {
-                    deletedOrdinals.add(-1);
+                    canFastFindRows = false;
+                    ordinalMap.clear();
                 }
             }
 
             // write postings
             long postingsOffset = postingsOutput.getFilePointer();
-            long postingsPosition = new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
+
+            long postingsPosition = canFastFindRows
+                                    ? new VectorPostingsWriter<T>(ordinalMap).writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals)
+                                    : new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
             long postingsLength = postingsPosition - postingsOffset;
+
 
             // write the graph
             long termsOffset = indexOutputWriter.getFilePointer();
-            long termsPosition = new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
+            boolean needToRemapOrdinals = canFastFindRows && !ordinalMap.isEmpty();
+            long termsPosition = needToRemapOrdinals
+                                 ? new HnswGraphWriter(ordinalMap, builder.getGraph()).write(indexOutputWriter)
+                                 : new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
             long termsLength = termsPosition - termsOffset;
 
             // add components to the metadata map

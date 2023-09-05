@@ -21,6 +21,7 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -32,6 +33,7 @@ import org.apache.lucene.util.Bits;
 
 public class OnDiskOrdinalsMap
 {
+
     private static final Logger logger = LoggerFactory.getLogger(OnDiskOrdinalsMap.class);
 
     private final FileHandle fh;
@@ -54,14 +56,12 @@ public class OnDiskOrdinalsMap
         {
             reader.seek(segmentOffset);
             int deletedCount = reader.readInt();
+            if (deletedCount == -1) {
+                rowIdsMatchOrdinals = true;
+            }
             for (var i = 0; i < deletedCount; i++)
             {
                 int ordinal = reader.readInt();
-                if (ordinal == -1) {
-                    assert deletedCount == 1;
-                    rowIdsMatchOrdinals = true;
-                    break;
-                }
                 deletedOrdinals.add(ordinal);
             }
 
