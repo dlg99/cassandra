@@ -51,7 +51,7 @@ public class VectorTypeTest extends VectorTester
     {
         System.setProperty("cassandra.custom_tracing_class", "org.apache.cassandra.tracing.TracingTestImpl");
     }
-
+    
     @Test
     public void endToEndTest() throws Throwable
     {

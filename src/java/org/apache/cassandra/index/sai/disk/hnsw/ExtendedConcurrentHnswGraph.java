@@ -21,6 +21,7 @@ package org.apache.cassandra.index.sai.disk.hnsw;
 import java.io.IOException;
 import java.util.Arrays;
 
+import org.apache.lucene.util.hnsw.ConcurrentNeighborSet;
 import org.apache.lucene.util.hnsw.ConcurrentOnHeapHnswGraph;
 import org.apache.lucene.util.hnsw.HnswGraph;
 
