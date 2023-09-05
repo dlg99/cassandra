@@ -63,7 +63,6 @@ public class CassandraOnDiskHnsw implements AutoCloseable
 
         SegmentMetadata.ComponentMetadata termsMetadata = componentMetadatas.get(IndexComponent.TERMS_DATA);
         hnsw = new OnDiskHnswGraph(indexFiles.termsData(), termsMetadata.offset, termsMetadata.length, OFFSET_CACHE_MIN_BYTES);
-
         var mockContext = new QueryContext();
         try (var vectors = new OnDiskVectors(indexFiles.vectors(), vectorsSegmentOffset))
         {
@@ -153,7 +152,6 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     private ReorderingPostingList annRowIdsToPostings(NeighborQueue queue) throws IOException
     {
         int originalSize = queue.size();
-
         try (var iterator = new RowIdIterator(queue))
         {
             return new ReorderingPostingList(iterator, originalSize);

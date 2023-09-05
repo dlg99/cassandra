@@ -28,7 +28,6 @@ import java.util.function.Function;
 
 import com.google.common.collect.BiMap;
 
-import org.agrona.collections.IntArrayList;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.Pair;
 

@@ -23,7 +23,6 @@ import java.util.HashMap;
 import java.util.function.Function;
 
 import com.google.common.collect.BiMap;
-import com.google.common.collect.ImmutableBiMap;
 import org.slf4j.Logger;
 
 import org.apache.cassandra.index.sai.disk.io.IndexOutputWriter;
