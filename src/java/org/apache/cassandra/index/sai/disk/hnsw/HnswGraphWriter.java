@@ -47,7 +47,6 @@ public class HnswGraphWriter
         this.hnsw = hnsw;
         this.maxOrdinal = hnsw.size();
         this.useOrdinalsMapper = false;
-
         this.ordinalsMapper = x -> x;
         this.reverseOrdinalsMapper = x -> x;
     }

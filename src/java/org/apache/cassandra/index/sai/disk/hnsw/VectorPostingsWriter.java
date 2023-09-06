@@ -40,7 +40,6 @@ public class VectorPostingsWriter<T>
 
     public VectorPostingsWriter() {
         this.useOrdinalsMapper = false;
-
         this.reverseOrdinalsMapper = x -> x;
     }
 
@@ -103,11 +102,9 @@ public class VectorPostingsWriter<T>
 
         // Write postings lists
         for (var i = 0; i < vectorValues.size(); i++) {
-            VectorPostings<T> postings = postingsMap.get(vectorValues.vectorValue(i));
-
             var originalOrdinal = useOrdinalsMapper
-                          ? reverseOrdinalsMapper.apply(postings.getOrdinal())
-                          : postings.getOrdinal();
+                          ? reverseOrdinalsMapper.apply(i)
+                          : i;
             var rowIds = postingsMap.get(vectorValues.vectorValue(originalOrdinal)).getRowIds();
 
             writer.writeInt(rowIds.size());

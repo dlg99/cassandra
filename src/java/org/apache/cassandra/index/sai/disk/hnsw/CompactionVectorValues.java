@@ -76,13 +76,18 @@ public class CompactionVectorValues implements RamAwareVectorValues
         return this;
     }
 
+    @Override
+    public ByteBuffer serializeVectorValue(int i) {
+        return values.get(i);
+    }
+
     public long write(SequentialWriter writer) throws IOException
     {
         writer.writeInt(size());
         writer.writeInt(dimension());
 
         for (var i = 0; i < size(); i++) {
-            var bb = values.get(i);
+            var bb = serializeVectorValue(i);
             assert bb != null : "null vector at index " + i + " of " + size();
             writer.write(bb);
         }

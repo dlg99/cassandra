@@ -150,6 +150,10 @@ public class OnDiskOrdinalsMap
          */
         public int getOrdinalForRowId(int rowId) throws IOException
         {
+            if (rowIdsMatchOrdinals) {
+                return rowId;
+            }
+
             // Compute the offset of the start of the rowId to vectorOrdinal mapping
             long index = DiskBinarySearch.searchInt(0, Math.toIntExact(high), rowId, i -> {
                 try

@@ -46,6 +46,7 @@ import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
 import org.apache.cassandra.index.sai.disk.v1.IndexWriterConfig;
 import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
 import org.apache.cassandra.index.sai.utils.IndexFileUtils;
+import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.lucene.index.VectorEncoding;
@@ -54,10 +55,65 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.hnsw.HnswGraphSearcher;
 import org.apache.lucene.util.hnsw.NeighborQueue;
+import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
 
 public class CassandraOnHeapHnsw<T>
 {
     private static final Logger logger = LoggerFactory.getLogger(CassandraOnHeapHnsw.class);
+
+    private class ReorderingRamAwareVectorValues implements RamAwareVectorValues {
+        private final RamAwareVectorValues vectors;
+        private final BiMap <Integer, Integer> ordinalMap;
+
+        public ReorderingRamAwareVectorValues (RamAwareVectorValues vectors, BiMap <Integer, Integer> ordinalMap) {
+            this.vectors = vectors;
+            this.ordinalMap = ordinalMap;
+        }
+
+        @Override
+        public long write(SequentialWriter writer) throws IOException
+        {
+            return vectors.write(writer);
+        }
+
+        @Override
+        public int size()
+        {
+            return vectors.size();
+        }
+
+        @Override
+        public int dimension()
+        {
+            return vectors.dimension();
+        }
+
+        @Override
+        public ByteBuffer serializeVectorValue(int i)
+        {
+            int originalOrdinal = ordinalMap.inverse().getOrDefault(i, i);
+            return vectors.serializeVectorValue(originalOrdinal);
+        }
+
+        @Override
+        public float[] vectorValue(int i)
+        {
+            int originalOrdinal = ordinalMap.inverse().getOrDefault(i, i);
+            return vectors.vectorValue(originalOrdinal);
+        }
+
+        @Override
+        public RandomAccessVectorValues<float[]> copy() throws IOException
+        {
+            return vectors.copy();
+        }
+
+        @Override
+        public long ramBytesUsed()
+        {
+            return vectors.ramBytesUsed();
+        }
+    }
 
     private final RamAwareVectorValues vectorValues;
     private final CassandraHnswGraphBuilder<float[]> builder;
@@ -299,11 +355,6 @@ public class CassandraOnHeapHnsw<T>
              var postingsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.POSTING_LISTS, indexContext), true);
              var indexOutputWriter = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.TERMS_DATA, indexContext), true))
         {
-            // write vectors
-            long vectorOffset = vectorsOutput.getFilePointer();
-            long vectorPosition = vectorValues.write(vectorsOutput.asSequentialWriter());
-            long vectorLength = vectorPosition - vectorOffset;
-
             var deletedOrdinals = new HashSet<Integer>();
             postingsMap.values().stream().filter(VectorPostings::isEmpty).forEach(vectorPostings -> deletedOrdinals.add(vectorPostings.getOrdinal()));
             // remove ordinals that don't have corresponding row ids due to partition/range deletion
@@ -352,6 +403,15 @@ public class CassandraOnHeapHnsw<T>
                 }
             }
 
+            boolean needToRemapOrdinals = canFastFindRows && !ordinalMap.isEmpty();
+
+            // write vectors
+            long vectorOffset = vectorsOutput.getFilePointer();
+            long vectorPosition = needToRemapOrdinals
+                                  ? new ReorderingRamAwareVectorValues(vectorValues, ordinalMap).write(vectorsOutput.asSequentialWriter())
+                                  : vectorValues.write(vectorsOutput.asSequentialWriter());
+            long vectorLength = vectorPosition - vectorOffset;
+
             // write postings
             long postingsOffset = postingsOutput.getFilePointer();
 
@@ -363,7 +423,6 @@ public class CassandraOnHeapHnsw<T>
 
             // write the graph
             long termsOffset = indexOutputWriter.getFilePointer();
-            boolean needToRemapOrdinals = canFastFindRows && !ordinalMap.isEmpty();
             long termsPosition = needToRemapOrdinals
                                  ? new HnswGraphWriter(ordinalMap, builder.getGraph()).write(indexOutputWriter)
                                  : new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);

@@ -19,15 +19,25 @@
 package org.apache.cassandra.index.sai.disk.hnsw;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
 
 public interface RamAwareVectorValues extends RandomAccessVectorValues<float[]>
 {
-    public long write(SequentialWriter writer) throws IOException;
+    long write(SequentialWriter writer) throws IOException;
 
     float[] vectorValue(int i);
 
-    public long ramBytesUsed();
+    long ramBytesUsed();
+
+    default ByteBuffer serializeVectorValue(int i)
+    {
+        var byteBuffer = ByteBuffer.allocate(dimension() * Float.BYTES);
+        var floatBuffer = byteBuffer.asFloatBuffer();
+        floatBuffer.put(vectorValue(i));
+        floatBuffer.rewind();
+        return byteBuffer;
+    }
 }
