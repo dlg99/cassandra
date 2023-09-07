@@ -110,7 +110,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
     private class RowIdIterator implements PrimitiveIterator.OfInt, AutoCloseable
     {
         private final NeighborQueue queue;
-        private final OnDiskOrdinalsMap.RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
+        private final RowIdsView rowIdsView = ordinalsMap.getRowIdsView();
 
         private PrimitiveIterator.OfInt segmentRowIdIterator = IntStream.empty().iterator();
 
@@ -164,7 +164,7 @@ public class CassandraOnDiskHnsw implements AutoCloseable
         hnsw.close();
     }
 
-    public OnDiskOrdinalsMap.OrdinalsView getOrdinalsView() throws IOException
+    public OrdinalsView getOrdinalsView() throws IOException
     {
         return ordinalsMap.getOrdinalsView();
     }

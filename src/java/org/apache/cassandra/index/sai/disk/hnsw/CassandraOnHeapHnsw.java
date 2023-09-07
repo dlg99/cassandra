@@ -309,6 +309,7 @@ public class CassandraOnHeapHnsw<T>
                     deletedOrdinals.add(vectorPostings.getOrdinal());
             }
 
+            // map of existing ordinal to rowId (aka new ordinal if remapping is possible)
             BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
             boolean canFastFindRows = false;
             if (deletedOrdinals.size() == 0) {
@@ -347,11 +348,9 @@ public class CassandraOnHeapHnsw<T>
                 }
             }
 
-            boolean needToRemapOrdinals = canFastFindRows && !ordinalMap.isEmpty();
-
             // write vectors
             long vectorOffset = vectorsOutput.getFilePointer();
-            long vectorPosition = needToRemapOrdinals
+            long vectorPosition = canFastFindRows
                                   ? vectorValues.write(vectorsOutput.asSequentialWriter(),
                                                        x -> ordinalMap.inverse().getOrDefault(x, x))
                                   : vectorValues.write(vectorsOutput.asSequentialWriter());
@@ -368,7 +367,7 @@ public class CassandraOnHeapHnsw<T>
 
             // write the graph
             long termsOffset = indexOutputWriter.getFilePointer();
-            long termsPosition = needToRemapOrdinals
+            long termsPosition = canFastFindRows
                                  ? new HnswGraphWriter(ordinalMap, builder.getGraph()).write(indexOutputWriter)
                                  : new HnswGraphWriter(builder.getGraph()).write(indexOutputWriter);
             long termsLength = termsPosition - termsOffset;
