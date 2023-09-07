@@ -26,18 +26,14 @@ import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
 
 public interface RamAwareVectorValues extends RandomAccessVectorValues<float[]>
 {
-    long write(SequentialWriter writer) throws IOException;
+    default long write(SequentialWriter writer) throws IOException
+    {
+        return write(writer, x -> x);
+    }
+
+    long write(SequentialWriter writer, java.util.function.Function<Integer, Integer> ordinalMapper) throws IOException;
 
     float[] vectorValue(int i);
 
     long ramBytesUsed();
-
-    default ByteBuffer serializeVectorValue(int i)
-    {
-        var byteBuffer = ByteBuffer.allocate(dimension() * Float.BYTES);
-        var floatBuffer = byteBuffer.asFloatBuffer();
-        floatBuffer.put(vectorValue(i));
-        floatBuffer.rewind();
-        return byteBuffer;
-    }
 }

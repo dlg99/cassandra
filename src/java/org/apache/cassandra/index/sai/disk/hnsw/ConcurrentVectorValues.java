@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.cassandra.cql3.functions.Function;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.hnsw.RandomAccessVectorValues;
@@ -70,7 +71,7 @@ public class ConcurrentVectorValues implements RamAwareVectorValues
         return this;
     }
 
-    public long write(SequentialWriter writer) throws IOException
+    public long write(SequentialWriter writer, java.util.function.Function<Integer, Integer> ordinalMapper) throws IOException
     {
         writer.writeInt(size());
         writer.writeInt(dimension());
@@ -80,7 +81,8 @@ public class ConcurrentVectorValues implements RamAwareVectorValues
         var floatBuffer = byteBuffer.asFloatBuffer();
 
         for (var i = 0; i < size(); i++) {
-            floatBuffer.put(vectorValue(i));
+            int ord = ordinalMapper.apply(i);
+            floatBuffer.put(vectorValue(ord));
             // bytebuffer and floatBuffer track their positions separately, and we never changed BB's, so don't need to rewind it
             floatBuffer.rewind();
             writer.write(byteBuffer);
