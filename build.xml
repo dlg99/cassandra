@@ -177,7 +177,7 @@
     <resources id="_jvm11_arg_items">
         <string>-Djdk.attach.allowAttachSelf=true</string>
 
-        <string>-XX:+UseConcMarkSweepGC</string>
+        <!--string>-XX:+UseConcMarkSweepGC</string>
         <string>-XX:+CMSParallelRemarkEnabled</string>
         <string>-XX:SurvivorRatio=8</string>
         <string>-XX:MaxTenuringThreshold=1</string>
@@ -185,7 +185,9 @@
         <string>-XX:+UseCMSInitiatingOccupancyOnly</string>
         <string>-XX:CMSWaitDuration=10000</string>
         <string>-XX:+CMSParallelInitialMarkEnabled</string>
-        <string>-XX:+CMSEdenChunksRecordAlways</string>
+        <string>-XX:+CMSEdenChunksRecordAlways</string-->
+
+        <string>-Djava.security.manager=allow</string>
 
         <string>--add-exports java.base/jdk.internal.misc=ALL-UNNAMED</string>
         <string>--add-exports java.base/jdk.internal.ref=ALL-UNNAMED</string>
@@ -195,6 +197,9 @@
         <string>--add-exports java.rmi/sun.rmi.server=ALL-UNNAMED</string>
         <string>--add-exports java.sql/java.sql=ALL-UNNAMED</string>
 
+        <string>--add-opens java.base/java.io=ALL-UNNAMED</string>
+         <string>--add-opens java.base/java.nio=ALL-UNNAMED</string>
+        <string>--add-opens java.base/sun.nio.ch=ALL-UNNAMED</string>
         <string>--add-opens java.base/java.lang.module=ALL-UNNAMED</string>
         <string>--add-opens java.base/java.net=ALL-UNNAMED</string>
         <string>--add-opens java.base/jdk.internal.loader=ALL-UNNAMED</string>
@@ -233,7 +238,7 @@
     </resources>
     <pathconvert property="_jvm8_test_arg_items_concat" refid="_jvm8_test_arg_items" pathsep=" "/>
     <resources id="_jvm11_test_arg_items">
-        <string>-XX:-CMSClassUnloadingEnabled</string>
+        <!--string>-XX:-CMSClassUnloadingEnabled</string-->
         <string>-Dio.netty.tryReflectionSetAccessible=true</string>
     </resources>
     <pathconvert property="_jvm11_test_arg_items_concat" refid="_jvm11_test_arg_items" pathsep=" "/>
