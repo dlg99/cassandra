@@ -235,7 +235,7 @@
             <file file="${local.repository}/org/apache/cassandra/deps/six-1.12.0-py2.py3-none-any.zip"/>
             <file file="${local.repository}/org/apache/cassandra/deps/geomet-0.1.0.zip"/>
             <file file="${local.repository}/org/apache/cassandra/deps/wcwidth-0.2.6-py2.py3-none-any.zip"/>
-            <file file="${local.repository}/com/github/jbellis/jvector/1.0-SNAPSHOT/jvector-1.0-SNAPSHOT.jar"/>
+            <file file="${local.repository}/com/github/jbellis/jvector/1.0-SNAPSHOT/jvector-1.0-SNAPSHOT-jdk20.jar"/>
         </copy>
         <copy todir="${build.lib}/sigar-bin/" quiet="true">
             <file file="${local.repository}/org/apache/cassandra/deps/sigar-bin/libsigar-amd64-freebsd-6.so"/>
