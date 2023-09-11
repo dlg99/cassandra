@@ -222,27 +222,27 @@ public class V1OnDiskFormat implements OnDiskFormat
     {
         for (IndexComponent indexComponent : perIndexComponents(indexContext))
         {
-            // VSTODO: lucene doesn't follow SAI naming patterns and manage its own validation
-            if (!isBuildCompletionMarker(indexComponent) && !(indexContext.isVector()))
+            if (isBuildCompletionMarker(indexComponent))
             {
-                try (IndexInput input = indexDescriptor.openPerIndexInput(indexComponent, indexContext))
+                continue;
+            }
+            try (IndexInput input = indexDescriptor.openPerIndexInput(indexComponent, indexContext))
+            {
+                if (checksum)
+                    SAICodecUtils.validateChecksum(input);
+                else
+                    SAICodecUtils.validate(input);
+            }
+            catch (Throwable e)
+            {
+                if (logger.isDebugEnabled())
                 {
-                    if (checksum)
-                        SAICodecUtils.validateChecksum(input);
-                    else
-                        SAICodecUtils.validate(input);
+                    logger.debug(indexDescriptor.logMessage("{} failed for index component {} on SSTable {}"),
+                                 (checksum ? "Checksum validation" : "Validation"),
+                                 indexComponent,
+                                 indexDescriptor.descriptor);
                 }
-                catch (Throwable e)
-                {
-                    if (logger.isDebugEnabled())
-                    {
-                        logger.debug(indexDescriptor.logMessage("{} failed for index component {} on SSTable {}"),
-                                     (checksum ? "Checksum validation" : "Validation"),
-                                     indexComponent,
-                                     indexDescriptor.descriptor);
-                    }
-                    return false;
-                }
+                return false;
             }
         }
         return true;

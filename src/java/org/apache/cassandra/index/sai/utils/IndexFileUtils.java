@@ -19,6 +19,7 @@
 package org.apache.cassandra.index.sai.utils;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.zip.CRC32;
 
@@ -99,6 +100,13 @@ public class IndexFileUtils
         IncrementalChecksumSequentialWriter(File file)
         {
             super(file, writerOption);
+        }
+
+        @Override
+        public void write(ByteBuffer src) throws IOException
+        {
+            super.write(src.slice());
+            checksum.update(src.slice());
         }
 
         @Override
