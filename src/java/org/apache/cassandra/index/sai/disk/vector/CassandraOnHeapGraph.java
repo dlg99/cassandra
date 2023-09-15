@@ -302,43 +302,11 @@ public class CassandraOnHeapGraph<T>
             // map of existing ordinal to rowId (aka new ordinal if remapping is possible)
             BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
             boolean canFastFindRows = false;
-            if (deletedOrdinals.size() == 0) {
-                canFastFindRows = true;
-                int minRow = Integer.MAX_VALUE;
-                int maxRow = Integer.MIN_VALUE;
-                for (VectorPostings<T> vectorPostings : postingsMap.values())
-                {
-                    if (vectorPostings.getRowIds().size() != 1)
-                    {
-                        canFastFindRows = false;
-                        ordinalMap.clear();
-                        break;
-                    }
-                    int rowId = vectorPostings.getRowIds().getInt(0);
-                    int ordinal = vectorPostings.getOrdinal();
-                    minRow = Math.min(minRow, rowId);
-                    maxRow = Math.max(maxRow, rowId);
-                    if(rowId != ordinal)
-                    {
-                        if (ordinalMap.containsKey(ordinal) && ordinalMap.get(ordinal) != rowId)
-                        {
-                            canFastFindRows = false;
-                            ordinalMap.clear();
-                            break;
-                        } else {
-                            ordinalMap.put(ordinal, rowId);
-                        }
-                    }
-                }
-
-                if (canFastFindRows && (minRow != 0 || maxRow != postingsMap.values().size() - 1))
-                {
-                    canFastFindRows = false;
-                    ordinalMap.clear();
-                }
+            if (deletedOrdinals.isEmpty()) {
+                canFastFindRows = isFastFindRows(ordinalMap);
             }
 
-            Function<Integer, Integer> ordinalMapper = ordinalMap.isEmpty()
+            Function<Integer, Integer> ordinalMapper = !canFastFindRows || ordinalMap.isEmpty()
                                                           ? x -> x
                                                           : x -> ordinalMap.getOrDefault(x, x);
 
@@ -349,9 +317,9 @@ public class CassandraOnHeapGraph<T>
 
             // write postings
             long postingsOffset = postingsOutput.getFilePointer();
-            long postingsPosition = canFastFindRows
-                                    ? new VectorPostingsWriter<T>(ordinalMap).writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals)
-                                    : new VectorPostingsWriter<T>().writePostings(postingsOutput.asSequentialWriter(), vectorValues, postingsMap, deletedOrdinals);
+            long postingsPosition = new VectorPostingsWriter<T>(canFastFindRows, ordinalMap)
+                                            .writePostings(postingsOutput.asSequentialWriter(),
+                                                           vectorValues, postingsMap, deletedOrdinals);
             long postingsLength = postingsPosition - postingsOffset;
 
             // complete (internal clean up) and write the graph
@@ -368,6 +336,42 @@ public class CassandraOnHeapGraph<T>
             metadataMap.put(IndexComponent.PQ, -1, pqOffset, pqLength, vectorConfigs);
             return metadataMap;
         }
+    }
+
+    private boolean isFastFindRows(BiMap<Integer, Integer> ordinalMap)
+    {
+        boolean canFastFindRows;
+        canFastFindRows = true;
+        int minRow = Integer.MAX_VALUE;
+        int maxRow = Integer.MIN_VALUE;
+        for (VectorPostings<T> vectorPostings : postingsMap.values())
+        {
+            if (vectorPostings.getRowIds().size() != 1)
+            {
+                canFastFindRows = false;
+                ordinalMap.clear();
+                break;
+            }
+            int rowId = vectorPostings.getRowIds().getInt(0);
+            int ordinal = vectorPostings.getOrdinal();
+            minRow = Math.min(minRow, rowId);
+            maxRow = Math.max(maxRow, rowId);
+            if (ordinalMap.containsKey(ordinal))
+            {
+                canFastFindRows = false;
+                ordinalMap.clear();
+                break;
+            } else {
+                ordinalMap.put(ordinal, rowId);
+            }
+        }
+
+        if (minRow != 0 || maxRow != postingsMap.values().size() - 1)
+        {
+            canFastFindRows = false;
+            ordinalMap.clear();
+        }
+        return canFastFindRows;
     }
 
     // taken and adopted from com.github.jbellis.jvector.disk.OnDiskGraphIndex
@@ -411,10 +415,7 @@ public class CassandraOnHeapGraph<T>
         writer.writeBoolean(vectorValues.size() >= 1024);
         if (vectorValues.size() < 1024)
         {
-            if (logger.isDebugEnabled())
-            {
-                logger.debug("Skipping PQ for only {} vectors", vectorValues.size());
-            }
+            if (logger.isDebugEnabled()) logger.debug("Skipping PQ for only {} vectors", vectorValues.size());
             return writer.position();
         }
 

@@ -119,10 +119,6 @@ public class OnDiskOrdinalsMap
         {
             Preconditions.checkArgument(vectorOrdinal < size, "vectorOrdinal %s is out of bounds %s", vectorOrdinal, size);
 
-            if (rowIdsMatchOrdinals) {
-                return new int[] { vectorOrdinal };
-            }
-
             // read index entry
             try
             {

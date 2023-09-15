@@ -91,9 +91,8 @@ public class OnDiskOrdinalsMapTest
                                                        SequentialWriterOption.newBuilder().finishOnClose(true).build());
 
         long postingsOffset = writer.position();
-        long postingsPosition = ordinalsMap == null
-                                ? new VectorPostingsWriter<Integer>().writePostings(writer, vectorValues, postingsMap, deletedOrdinals)
-                                : new VectorPostingsWriter<Integer>(ordinalsMap).writePostings(writer, vectorValues, postingsMap, deletedOrdinals);
+        long postingsPosition = new VectorPostingsWriter<Integer>(ordinalsMap != null, ordinalsMap)
+                                    .writePostings(writer, vectorValues, postingsMap, deletedOrdinals);
         long postingsLength = postingsPosition - postingsOffset;
 
         writer.close();

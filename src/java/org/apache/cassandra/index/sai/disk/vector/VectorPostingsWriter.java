@@ -38,14 +38,11 @@ public class VectorPostingsWriter<T>
 
     private final Function<Integer, Integer> reverseOrdinalsMapper;
 
-    public VectorPostingsWriter() {
-        this.useOrdinalsMapper = false;
-        this.reverseOrdinalsMapper = x -> x;
-    }
-
-    public VectorPostingsWriter(BiMap<Integer, Integer> newOrdinals) {
-        this.useOrdinalsMapper = true;
-        this.reverseOrdinalsMapper = x -> newOrdinals.inverse().getOrDefault(x, x);
+    public VectorPostingsWriter(boolean canFastFindRows, BiMap<Integer, Integer> newOrdinals) {
+        this.useOrdinalsMapper = canFastFindRows;
+        this.reverseOrdinalsMapper = canFastFindRows
+                                        ? x -> newOrdinals.inverse().getOrDefault(x, x)
+                                        : x -> x;
     }
 
     public long writePostings(SequentialWriter writer,

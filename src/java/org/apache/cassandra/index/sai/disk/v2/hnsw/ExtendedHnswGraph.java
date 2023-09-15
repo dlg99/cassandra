@@ -61,25 +61,4 @@ public abstract class ExtendedHnswGraph extends HnswGraph
         Arrays.sort(sortedNodes);
         return sortedNodes;
     }
-
-    public static int[] getSortedNodes(ExtendedHnswGraph hnsw, int level, Function<Integer, Integer> ordinalsMapper)
-    {
-        final NodesIterator nodesOnLevel;
-        try
-        {
-            nodesOnLevel = hnsw.getNodesOnLevel(level);
-        }
-        catch (IOException e)
-        {
-            throw new RuntimeException(e);
-        }
-        var sortedNodes = new int[nodesOnLevel.size()];
-
-        for(var n = 0; nodesOnLevel.hasNext(); n++) {
-            sortedNodes[n] = ordinalsMapper.apply(nodesOnLevel.nextInt());
-        }
-
-        Arrays.sort(sortedNodes);
-        return sortedNodes;
-    }
 }
