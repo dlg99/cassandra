@@ -105,8 +105,9 @@ public class IndexFileUtils
         @Override
         public void write(ByteBuffer src) throws IOException
         {
-            super.write(src.slice());
-            checksum.update(src.slice());
+            ByteBuffer shallowCopy = src.slice();
+            super.write(src);
+            checksum.update(shallowCopy);
         }
 
         @Override
