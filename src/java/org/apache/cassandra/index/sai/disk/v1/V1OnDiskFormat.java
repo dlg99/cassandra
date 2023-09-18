@@ -117,6 +117,13 @@ public class V1OnDiskFormat implements OnDiskFormat
         {
             return false;
         }
+
+        @Override
+        public boolean hasVectorIndexChecksum()
+        {
+            return false;
+        }
+
     };
 
     protected V1OnDiskFormat()
@@ -222,10 +229,10 @@ public class V1OnDiskFormat implements OnDiskFormat
     {
         for (IndexComponent indexComponent : perIndexComponents(indexContext))
         {
-            if (isBuildCompletionMarker(indexComponent))
-            {
-                continue;
-            }
+            if (!isBuildCompletionMarker(indexComponent)) continue;
+            // V1 does not have a checksum for the vector index
+            if (indexContext.isVector()) continue;
+
             try (IndexInput input = indexDescriptor.openPerIndexInput(indexComponent, indexContext))
             {
                 if (checksum)

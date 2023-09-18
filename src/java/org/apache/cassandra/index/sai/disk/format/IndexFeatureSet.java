@@ -37,6 +37,11 @@ public interface IndexFeatureSet
      */
     boolean isRowAware();
 
+    default boolean hasVectorIndexChecksum()
+    {
+        return true;
+    }
+
     /**
      * The {@code Accumulator} is used to accumulate the {@code IndexFeatureSet} responses from
      * multiple sources. This will include all the SSTables included in a query and all the indexes
@@ -50,6 +55,7 @@ public interface IndexFeatureSet
     public static class Accumulator
     {
         boolean isRowAware = true;
+        boolean hasVectorIndexChecksum = true;
         boolean complete = false;
 
         /**
@@ -62,6 +68,8 @@ public interface IndexFeatureSet
             assert !complete : "Cannot accumulate after complete has been called";
             if (!indexFeatureSet.isRowAware())
                 isRowAware = false;
+            if (!indexFeatureSet.hasVectorIndexChecksum())
+                hasVectorIndexChecksum = false;
         }
 
         /**
@@ -79,6 +87,11 @@ public interface IndexFeatureSet
                 public boolean isRowAware()
                 {
                     return isRowAware;
+                }
+                @Override
+                public boolean hasVectorIndexChecksum()
+                {
+                    return hasVectorIndexChecksum;
                 }
             };
         }
