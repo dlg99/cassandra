@@ -79,10 +79,7 @@ public class IndexFileUtils
         {
             // Got to recalculate checksum for the file opened for append, otherwise final checksum will be wrong.
             // Checksum verification is not happening here as it sis not guranteed that the file has the checksum/footer.
-            boolean res = checksumWriter.recalculateChecksum();
-            if (!res) {
-                logger.error("Failed to recalculate checksum for file {} opened for append", file);
-            }
+            checksumWriter.recalculateChecksum();
             indexOutputWriter.skipBytes(file.length());
         }
 
@@ -128,18 +125,18 @@ public class IndexFileUtils
          * and only account for appended data. Checksum validation will compare it to the checksum of the whole file and fail.
          * Hence, for the existing files this method should be called to recalculate the checksum.
          *
-         * @return true if checksum was recalculated successfully, false otherwise.
+         * @throws IOException if file read failed.
          */
-        public boolean recalculateChecksum()
+        public void recalculateChecksum() throws IOException
         {
             checksum.reset();
             if (!file.exists())
-                return true;
+                return;
 
             try(FileChannel ch = FileChannel.open(file.toPath(), StandardOpenOption.READ))
             {
                 if (ch.size() == 0)
-                    return true;
+                    return;
 
                 final ByteBuffer buf = ByteBuffer.allocateDirect(65536);
                 int b = ch.read(buf);
@@ -150,12 +147,6 @@ public class IndexFileUtils
                     buf.clear();
                     b = ch.read(buf);
                 }
-                return true;
-            }
-            catch (Throwable t)
-            {
-                logger.error("Failed to recalculate checksum", t);
-                return false;
             }
         }
 
