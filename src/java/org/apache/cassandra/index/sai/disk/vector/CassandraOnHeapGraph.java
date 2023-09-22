@@ -51,7 +51,6 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.sai.IndexContext;
 import org.apache.cassandra.index.sai.disk.format.IndexComponent;
 import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
-import org.apache.cassandra.index.sai.disk.format.Version;
 import org.apache.cassandra.index.sai.disk.v1.IndexWriterConfig;
 import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
 import org.apache.cassandra.index.sai.utils.IndexFileUtils;
@@ -285,6 +284,10 @@ public class CassandraOnHeapGraph<T>
              var postingsOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.POSTING_LISTS, indexContext), true);
              var indexOutput = IndexFileUtils.instance.openOutput(indexDescriptor.fileFor(IndexComponent.TERMS_DATA, indexContext), true))
         {
+            SAICodecUtils.writeHeader(pqOutput);
+            SAICodecUtils.writeHeader(postingsOutput);
+            SAICodecUtils.writeHeader(indexOutput);
+
             // compute and write PQ
             long pqOffset = pqOutput.getFilePointer();
             long pqPosition = writePQ(pqOutput.asSequentialWriter());

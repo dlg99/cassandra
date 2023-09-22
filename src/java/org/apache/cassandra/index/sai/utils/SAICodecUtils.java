@@ -207,6 +207,7 @@ public class SAICodecUtils
             throw new IllegalStateException(
             "Illegal CRC-32 checksum: " + value + " (resource=" + output + ")");
         }
+        System.out.println("wrote CRC: " + value);
         writeBELong(output, value);
     }
 
