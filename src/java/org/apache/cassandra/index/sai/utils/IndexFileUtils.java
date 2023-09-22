@@ -121,7 +121,13 @@ public class IndexFileUtils
 
         /**
          * Recalculates checksum for the file.
-         * Usefil when the file is opened for append and checksum will need to account for th eexisting data.
+         *
+         * Usefil when the file is opened for append and checksum will need to account for the existing data.
+         * e.g. if the file opened for append is a new file, then checksum start at 0 and goes from there with the writes.
+         * If the file opened for append is an existing file, without recalculating the checksum will start at 0
+         * and only account for appended data. Checksum validation will compare it to the checksum of the whole file and fail.
+         * Hence, for the existing files this method should be called to recalculate the checksum.
+         *
          * @return true if checksum was recalculated successfully, false otherwise.
          */
         public boolean recalculateChecksum()
