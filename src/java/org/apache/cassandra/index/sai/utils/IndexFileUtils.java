@@ -119,6 +119,11 @@ public class IndexFileUtils
             super(file, writerOption);
         }
 
+        /**
+         * Recalculates checksum for the file.
+         * Usefil when the file is opened for append and checksum will need to account for th eexisting data.
+         * @return true if checksum was recalculated successfully, false otherwise.
+         */
         public boolean recalculateChecksum()
         {
             checksum.reset();
@@ -129,8 +134,6 @@ public class IndexFileUtils
             {
                 if (ch.size() == 0)
                     return true;
-                if (ch.size() < CodecUtil.footerLength())
-                    return false;
 
                 final ByteBuffer buf = ByteBuffer.allocateDirect(65536);
                 int b = ch.read(buf);
@@ -142,7 +145,8 @@ public class IndexFileUtils
                     b = ch.read(buf);
                 }
                 return true;
-            } catch (Throwable t)
+            }
+            catch (Throwable t)
             {
                 logger.error("Failed to recalculate checksum", t);
                 return false;
