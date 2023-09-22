@@ -110,7 +110,7 @@ public class IndexFileUtils
         long getChecksum();
     }
 
-    public class IncrementalChecksumSequentialWriter extends SequentialWriter implements ChecksumWriter
+    class IncrementalChecksumSequentialWriter extends SequentialWriter implements ChecksumWriter
     {
         private final CRC32 checksum = new CRC32();
 
