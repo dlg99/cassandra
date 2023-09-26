@@ -318,18 +318,16 @@ public class CassandraOnHeapGraph<T>
             }
 
             // map of existing ordinal to rowId (aka new ordinal if remapping is possible)
-            BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
-            boolean canFastFindRows = false;
-            if (deletedOrdinals.isEmpty()) {
-                canFastFindRows = isFastFindRows(ordinalMap);
-            }
+            // null if remapping is not possible
+            final BiMap <Integer, Integer> ordinalMap = deletedOrdinals.isEmpty() ? buildOrdinalMap() : null;
 
-            IntUnaryOperator ordinalMapper = !canFastFindRows || ordinalMap.isEmpty()
-                                                          ? x -> x
-                                                          : x -> ordinalMap.getOrDefault(x, x);
-            IntUnaryOperator reverseOrdinalMapper = !canFastFindRows || ordinalMap.isEmpty()
-                                                               ? x -> x
-                                                               : x -> ordinalMap.inverse().getOrDefault(x, x);
+            boolean canFastFindRows = ordinalMap != null;
+            IntUnaryOperator ordinalMapper = canFastFindRows
+                                                ? x -> ordinalMap.getOrDefault(x, x)
+                                                : x -> x;
+            IntUnaryOperator reverseOrdinalMapper = canFastFindRows
+                                                        ? x -> ordinalMap.inverse().getOrDefault(x, x)
+                                                        : x -> x;
 
             // compute and write PQ
             long pqOffset = pqOutput.getFilePointer();
@@ -365,19 +363,16 @@ public class CassandraOnHeapGraph<T>
         }
     }
 
-    private boolean isFastFindRows(BiMap<Integer, Integer> ordinalMap)
+    private BiMap <Integer, Integer> buildOrdinalMap()
     {
-        boolean canFastFindRows;
-        canFastFindRows = true;
+        BiMap <Integer, Integer> ordinalMap = HashBiMap.create();
         int minRow = Integer.MAX_VALUE;
         int maxRow = Integer.MIN_VALUE;
         for (VectorPostings<T> vectorPostings : postingsMap.values())
         {
             if (vectorPostings.getRowIds().size() != 1)
             {
-                canFastFindRows = false;
-                ordinalMap.clear();
-                break;
+                return null;
             }
             int rowId = vectorPostings.getRowIds().getInt(0);
             int ordinal = vectorPostings.getOrdinal();
@@ -385,9 +380,7 @@ public class CassandraOnHeapGraph<T>
             maxRow = Math.max(maxRow, rowId);
             if (ordinalMap.containsKey(ordinal))
             {
-                canFastFindRows = false;
-                ordinalMap.clear();
-                break;
+                return null;
             } else {
                 ordinalMap.put(ordinal, rowId);
             }
@@ -395,10 +388,9 @@ public class CassandraOnHeapGraph<T>
 
         if (minRow != 0 || maxRow != postingsMap.values().size() - 1)
         {
-            canFastFindRows = false;
-            ordinalMap.clear();
+            return null;
         }
-        return canFastFindRows;
+        return ordinalMap;
     }
 
     // taken and adopted from com.github.jbellis.jvector.disk.OnDiskGraphIndex
@@ -420,10 +412,10 @@ public class CassandraOnHeapGraph<T>
             int originalNode = reverseOrdinalMapper.applyAsInt(node);
             Io.writeFloats(out, (float[])vectors.vectorValue(originalNode));
             NodesIterator neighbors = view.getNeighborsIterator(originalNode);
-            out.writeInt(neighbors.size());
+            int n = neighbors.size();
+            out.writeInt(n);
 
-            int n;
-            for(n = 0; n < neighbors.size(); ++n) {
+            while (neighbors.hasNext()) {
                 out.writeInt(ordinalMapper.applyAsInt(neighbors.nextInt()));
             }
 
@@ -449,10 +441,7 @@ public class CassandraOnHeapGraph<T>
             return writer.position();
         }
 
-        if (logger.isDebugEnabled())
-        {
-            logger.debug("Computing PQ for {} vectors", vectorValues.size());
-        }
+        if (logger.isDebugEnabled()) logger.debug("Computing PQ for {} vectors", vectorValues.size());
         // limit the PQ computation and encoding to one index at a time -- goal during flush is to
         // evict from memory ASAP so better to do the PQ build (in parallel) one at a time
         synchronized (CassandraOnHeapGraph.class)
