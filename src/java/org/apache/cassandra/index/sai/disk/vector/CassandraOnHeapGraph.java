@@ -18,7 +18,6 @@
 
 package org.apache.cassandra.index.sai.disk.vector;
 
-import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -41,12 +40,9 @@ import org.cliffc.high_scale_lib.NonBlockingHashMapLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.github.jbellis.jvector.disk.Io;
-import io.github.jbellis.jvector.graph.GraphIndex;
+import io.github.jbellis.jvector.disk.OnDiskGraphIndex;
 import io.github.jbellis.jvector.graph.GraphIndexBuilder;
 import io.github.jbellis.jvector.graph.GraphSearcher;
-import io.github.jbellis.jvector.graph.NodesIterator;
-import io.github.jbellis.jvector.graph.RandomAccessVectorValues;
 import io.github.jbellis.jvector.pq.CompressedVectors;
 import io.github.jbellis.jvector.pq.ProductQuantization;
 import io.github.jbellis.jvector.util.Bits;
@@ -345,7 +341,8 @@ public class CassandraOnHeapGraph<T>
             builder.complete();
             long termsOffset = indexOutput.getFilePointer();
 
-            writeGraph(builder.getGraph(), vectorValues, indexOutput.asSequentialWriter(), ordinalMapper, reverseOrdinalMapper);
+            OnDiskGraphIndex.write(new RemappingOnDiskGraphIndex<>(builder.getGraph(), ordinalMapper, reverseOrdinalMapper),
+                                   vectorValues, indexOutput.asSequentialWriter());
             long termsLength = indexOutput.getFilePointer() - termsOffset;
 
             // write footers/checksums
@@ -391,41 +388,6 @@ public class CassandraOnHeapGraph<T>
             return null;
         }
         return ordinalMap;
-    }
-
-    // taken and adopted from com.github.jbellis.jvector.disk.OnDiskGraphIndex
-    private static <T> void writeGraph(GraphIndex<T> graph,
-                                       RandomAccessVectorValues<T> vectors,
-                                       DataOutput out,
-                                       IntUnaryOperator ordinalMapper,
-                                       IntUnaryOperator reverseOrdinalMapper) throws IOException {
-        assert graph.size() == vectors.size() : "graph size " + graph.size() + " != vectors size " + vectors.size();
-
-        GraphIndex.View<T> view = graph.getView();
-        out.writeInt(graph.size());
-        out.writeInt(vectors.dimension());
-        out.writeInt(ordinalMapper.applyAsInt(view.entryNode()));
-        out.writeInt(graph.maxEdgesPerNode());
-
-        for(int node = 0; node < graph.size(); ++node) {
-            out.writeInt(node);
-            int originalNode = reverseOrdinalMapper.applyAsInt(node);
-            Io.writeFloats(out, (float[])vectors.vectorValue(originalNode));
-            NodesIterator neighbors = view.getNeighborsIterator(originalNode);
-            int n = neighbors.size();
-            out.writeInt(n);
-
-            while (neighbors.hasNext()) {
-                out.writeInt(ordinalMapper.applyAsInt(neighbors.nextInt()));
-            }
-
-            assert !neighbors.hasNext();
-
-            while(n < graph.maxEdgesPerNode()) {
-                out.writeInt(-1);
-                ++n;
-            }
-        }
     }
 
     private long writePQ(SequentialWriter writer, IntUnaryOperator reverseOrdinalMapper) throws IOException
