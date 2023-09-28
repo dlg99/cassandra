@@ -299,10 +299,10 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             // if we have a small number of results then let TopK processor do exact NN computation
             int topK = topKFor(limit);
             var maxBruteForceRows = min(globalBruteForceRows, maxBruteForceRows(topK, rowIds.size(), graph.size()));
-            logger.trace("SAI materialized {} rows; max brute force rows is {} for sstable index with {} nodes of degree {}, LIMIT {}",
-                         rowIds.size(), maxBruteForceRows, graph.size(), indexContext.getIndexWriterConfig().getMaximumNodeConnections(), limit);
-            Tracing.trace("SAI materialized {} rows; max brute force rows is {} for sstable index with {} nodes of degree {}, LIMIT {}",
-                          rowIds.size(), maxBruteForceRows, graph.size(), indexContext.getIndexWriterConfig().getMaximumNodeConnections(), limit);
+            logger.trace("SAI materialized {} rows; max brute force rows is {} for sstable index with {} nodes, LIMIT {}",
+                         rowIds.size(), maxBruteForceRows, graph.size(), limit);
+            Tracing.trace("SAI materialized {} rows; max brute force rows is {} for sstable index with {} nodes, LIMIT {}",
+                          rowIds.size(), maxBruteForceRows, graph.size(), limit);
             if (rowIds.size() <= maxBruteForceRows)
                 return toPrimaryKeyIterator(new ArrayPostingList(rowIds.toIntArray()), context, true);
 
