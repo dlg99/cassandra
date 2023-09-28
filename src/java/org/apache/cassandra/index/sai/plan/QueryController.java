@@ -23,6 +23,11 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Iterables;
@@ -195,6 +200,47 @@ public class QueryController
         {
             queryContext.checkpoint();
         }
+    }
+
+    public CompletableFuture<UnfilteredRowIterator> getPartitionAsync(PrimaryKey key,
+                                                                      ReadExecutionController executionController,
+                                                                      ExecutorService executorService)
+    {
+        if (key == null)
+        {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("non-null key required"));
+        }
+
+        final CompletableFuture<UnfilteredRowIterator> future = new CompletableFuture<>();
+
+        final SinglePartitionReadCommand partition = SinglePartitionReadCommand.create(cfs.metadata(),
+                                                                                 command.nowInSec(),
+                                                                                 command.columnFilter(),
+                                                                                 RowFilter.NONE,
+                                                                                 DataLimits.NONE,
+                                                                                 key.partitionKey(),
+                                                                                 makeFilter(key));
+
+        executorService.execute(() -> {
+            try
+            {
+                var r = partition.queryMemtableAndDisk(cfs, executionController);
+                future.complete(r);
+            }
+            catch (Throwable t)
+            {
+                future.completeExceptionally(t);
+            }
+        });
+
+        future.whenComplete((r, t) -> {
+            synchronized (queryContext)
+            {
+                queryContext.checkpoint();
+            }
+        });
+
+        return future;
     }
 
     /**

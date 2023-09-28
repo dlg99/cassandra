@@ -22,6 +22,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Supplier;
 
 import javax.annotation.Nonnull;
@@ -29,6 +32,7 @@ import javax.annotation.Nullable;
 
 import com.google.common.collect.Iterators;
 
+import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
@@ -165,6 +169,22 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         private final boolean topK;
 
         private PrimaryKey lastKey;
+
+        final static int numThreads = 2; //Math.max(1, Runtime.getRuntime().availableProcessors() / 4);
+        final static ExecutorService executorService = new ThreadPoolExecutor(numThreads, numThreads, 1000L,
+                                                                              java.util.concurrent.TimeUnit.MILLISECONDS,
+                                                                              new SynchronousQueue<>(true),
+                                                                              r -> {
+                                                                                  Thread t = new Thread(r);
+                                                                                  t.setName("query_controller_" + t.getId());
+                                                                                  return t;
+                                                                              },
+                                                                              new ThreadPoolExecutor.CallerRunsPolicy());
+
+        static
+        {
+            Runtime.getRuntime().addShutdownHook(new Thread(executorService::shutdownNow));
+        }
 
         private ResultRetriever(RangeIterator<PrimaryKey> operation,
                                 FilterTree filterTree,
@@ -406,7 +426,7 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             };
         }
 
-        public UnfilteredRowIterator apply(PrimaryKey key)
+        public UnfilteredRowIterator __apply(PrimaryKey key)
         {
             // Key reads are lazy, delayed all the way to this point. Skip if we've already seen this one:
             if (key.equals(lastKey))
@@ -420,6 +440,37 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
 
                 return applyIndexFilter(key, partition, filterTree, queryContext);
             }
+        }
+
+        public UnfilteredRowIterator apply(PrimaryKey key)
+        {
+            // Key reads are lazy, delayed all the way to this point. Skip if we've already seen this one:
+            if (key.equals(lastKey))
+                return null;
+
+            lastKey = key;
+
+            long startTime = System.nanoTime();
+            var res = controller.getPartitionAsync(key, executionController, executorService)
+//            var res = controller.getPartitionAsync(key, executionController, Stage.READ.executor())
+                                .thenApply(partition ->
+                                   {
+                                       synchronized (queryContext)
+                                       {
+                                           queryContext.partitionsRead++;
+                                       }
+                                       return applyIndexFilter(key, partition, filterTree, queryContext);
+                                   });
+
+            long joinStartTime = System.nanoTime();
+
+            var x = res.join();
+            long joinTotalTime = System.nanoTime() - joinStartTime;
+            long totalTime = System.nanoTime() - startTime;
+//            System.out.println("Time in join (ms): " + (float)joinTotalTime / 1000
+//                               + " the rest (ms): " + (float)(totalTime - joinTotalTime) / 1000);
+
+            return x;
         }
 
         private UnfilteredRowIterator applyIndexFilter(PrimaryKey key, UnfilteredRowIterator partition, FilterTree tree, QueryContext queryContext)

@@ -22,8 +22,13 @@ import java.nio.ByteBuffer;
 import java.util.Comparator;
 import java.util.Optional;
 import java.util.PriorityQueue;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.stream.StreamSupport;
 import javax.annotation.Nullable;
 
 import com.google.common.base.Preconditions;
@@ -101,7 +106,132 @@ public class VectorTopKProcessor
      * Filter given partitions and keep the rows with highest scores. In case of {@link UnfilteredPartitionIterator},
      * all tombstones will be kept.
      */
-    public <U extends Unfiltered, R extends BaseRowIterator<U>, P extends BasePartitionIterator<R>> BasePartitionIterator<?> filter(P partitions)
+    public <U extends Unfiltered, R extends BaseRowIterator<U>, P extends BasePartitionIterator<R>> BasePartitionIterator<?>
+      ____filter(P partitions)
+    {
+        final int overgrow = 25;
+        // priority queue ordered by score in ascending order
+        PriorityBlockingQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityBlockingQueue<>(limit + overgrow, Comparator.comparing(Triple::getRight));
+        // to store top-k results in primary key order
+        ConcurrentSkipListMap<PartitionInfo, TreeSet<Unfiltered>> unfilteredByPartition = new ConcurrentSkipListMap<>(Comparator.comparing(p -> p.key));
+
+        final Object lock = new Object();
+
+        // todo: can partitions be safely used for parallel iteration?
+        StreamSupport.stream(Spliterators.spliteratorUnknownSize(partitions, Spliterator.NONNULL), false)
+                     .onClose(partitions::close)
+                     //.parallel()
+                     .forEach(partition -> {
+                         synchronized (lock)
+                         {
+                         DecoratedKey key = partition.partitionKey();
+                         Row staticRow = partition.staticRow();
+                         PartitionInfo partitionInfo = PartitionInfo.create(partition);
+                         // compute key and static row score once per partition
+                         float keyAndStaticScore = getScoreForRow(key, staticRow, true);
+
+                             while (partition.hasNext())
+                             {
+                                 Unfiltered unfiltered = partition.next();
+                                 // Always include tombstones for coordinator. It relies on ReadCommand#withMetricsRecording to throw
+                                 // TombstoneOverwhelmingException to prevent OOM.
+                                 if (!unfiltered.isRow())
+                                 {
+                                     unfilteredByPartition.computeIfAbsent(partitionInfo, k -> new TreeSet<>(command.metadata().comparator))
+                                                          .add(unfiltered);
+                                     continue;
+                                 }
+
+                                 Row row = (Row) unfiltered;
+                                 float rowScore = getScoreForRow(key, row, false) + keyAndStaticScore;
+                                 topK.add(Triple.of(partitionInfo, row, rowScore));
+
+                                 // when exceeding limit, remove row with low score
+                                 if (topK.size() > limit + overgrow)
+                                 {
+                                     synchronized (topK)
+                                     {
+                                         int extras = topK.size() - limit;
+                                         for (int i = 0; i < extras; i++)
+                                             topK.poll();
+                                     }
+                                 }
+                             }
+                         }
+                     });
+
+        int extras = topK.size() - limit;
+        for (int i = 0; i < extras; i++)
+            topK.poll();
+
+        // reorder rows in partition/clustering order
+        for (Triple<PartitionInfo, Row, Float> triple : topK)
+            unfilteredByPartition.computeIfAbsent(triple.getLeft(), k -> new TreeSet<>(command.metadata().comparator))
+                                 .add(triple.getMiddle());
+
+        rowCount = topK.size();
+
+        if (partitions instanceof PartitionIterator)
+            return new InMemoryPartitionIterator(command, unfilteredByPartition);
+        return new InMemoryUnfilteredPartitionIterator(command, unfilteredByPartition);
+    }
+
+    public <U extends Unfiltered, R extends BaseRowIterator<U>, P extends BasePartitionIterator<R>> BasePartitionIterator<?>
+    filter(P partitions)
+    {
+        // priority queue ordered by score in ascending order
+        PriorityQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityQueue<>(limit, Comparator.comparing(Triple::getRight));
+        // to store top-k results in primary key order
+        TreeMap<PartitionInfo, TreeSet<Unfiltered>> unfilteredByPartition = new TreeMap<>(Comparator.comparing(p -> p.key));
+
+        while (partitions.hasNext())
+        {
+            try (R partition = partitions.next())
+            {
+                DecoratedKey key = partition.partitionKey();
+                Row staticRow = partition.staticRow();
+                PartitionInfo partitionInfo = PartitionInfo.create(partition);
+                // compute key and static row score once per partition
+                float keyAndStaticScore = getScoreForRow(key, staticRow, true);
+
+                while (partition.hasNext())
+                {
+                    Unfiltered unfiltered = partition.next();
+                    // Always include tombstones for coordinator. It relies on ReadCommand#withMetricsRecording to throw
+                    // TombstoneOverwhelmingException to prevent OOM.
+                    if (!unfiltered.isRow())
+                    {
+                        unfilteredByPartition.computeIfAbsent(partitionInfo, k -> new TreeSet<>(command.metadata().comparator))
+                                             .add(unfiltered);
+                        continue;
+                    }
+
+                    Row row = (Row) unfiltered;
+                    float rowScore = getScoreForRow(key, row, false) + keyAndStaticScore;
+                    topK.add(Triple.of(partitionInfo, row, rowScore));
+
+                    // when exceeding limit, remove row with low score
+                    while (topK.size() > limit)
+                        topK.poll();
+                }
+            }
+        }
+        partitions.close();
+
+        // reorder rows in partition/clustering order
+        for (Triple<PartitionInfo, Row, Float> triple : topK)
+            unfilteredByPartition.computeIfAbsent(triple.getLeft(), k -> new TreeSet<>(command.metadata().comparator))
+                                 .add(triple.getMiddle());
+
+        rowCount = topK.size();
+
+        if (partitions instanceof PartitionIterator)
+            return new InMemoryPartitionIterator(command, unfilteredByPartition);
+        return new InMemoryUnfilteredPartitionIterator(command, unfilteredByPartition);
+    }
+
+    public <U extends Unfiltered, R extends BaseRowIterator<U>, P extends BasePartitionIterator<R>> BasePartitionIterator<?>
+      __filter(P partitions)
     {
         // priority queue ordered by score in ascending order
         PriorityQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityQueue<>(limit, Comparator.comparing(Triple::getRight));
