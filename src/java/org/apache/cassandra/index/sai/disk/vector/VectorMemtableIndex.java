@@ -256,8 +256,8 @@ public class VectorMemtableIndex implements MemtableIndex
         var B = min(nPermittedOrdinals, graphSize);
         var N = graphSize;
         var raw = (int) (0.7 * pow(log(N), 2) * pow(N, 0.33) * pow(log(K), 2) * pow(log((double) N / B), 2) / pow(B, 0.13));
-        // we will always visit at least min(limit, graphSize) nodes
-        return max(raw, min(limit, graphSize));
+        // we will always visit at least min(limit, graphSize) nodes, and we can't visit more nodes than exist in the graph
+        return min(max(raw, min(limit, graphSize)), graphSize);
     }
 
     @Override
