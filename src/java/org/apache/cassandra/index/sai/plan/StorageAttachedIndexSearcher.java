@@ -20,9 +20,11 @@ package org.apache.cassandra.index.sai.plan;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -36,7 +38,9 @@ import org.apache.cassandra.db.PartitionPosition;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadExecutionController;
 import org.apache.cassandra.db.RegularAndStaticColumns;
+import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.filter.RowFilter;
+import org.apache.cassandra.db.partitions.ParallelizablePartitionIterator;
 import org.apache.cassandra.db.partitions.PartitionIterator;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.rows.AbstractUnfilteredRowIterator;
@@ -59,6 +63,7 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.AbstractIterator;
+import org.apache.cassandra.utils.Pair;
 
 public class StorageAttachedIndexSearcher implements Index.Searcher
 {
@@ -151,7 +156,8 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         return Operation.buildFilter(controller);
     }
 
-    private static class ResultRetriever extends AbstractIterator<UnfilteredRowIterator> implements UnfilteredPartitionIterator
+    private static class ResultRetriever extends AbstractIterator<UnfilteredRowIterator>
+                implements UnfilteredPartitionIterator, ParallelizablePartitionIterator
     {
         private final PrimaryKey firstPrimaryKey;
         private final PrimaryKey lastPrimaryKey;
@@ -237,6 +243,49 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
                 iterator = apply(key);
             }
             return iterator;
+        }
+
+        private @Nullable List<PrimaryKey> getKeys()
+        {
+            List<PrimaryKey> keys = new ArrayList<>();
+            while (true)
+            {
+                if (operation == null)
+                    break;
+
+                if (lastKey == null)
+                    operation.skipTo(firstPrimaryKey);
+
+                skipToNextPartition();
+
+                PrimaryKey key = nextSelectedKeyInRange();
+                if (key == null) break;
+                if (key.equals(lastKey)) break;
+
+                lastKey = key;
+                keys.add(key);
+            }
+            return keys;
+        }
+
+        @Override
+        public List<Pair<PrimaryKey, SinglePartitionReadCommand>> getUninitializedCommands()
+        {
+            List<PrimaryKey> keys = getKeys();
+            return keys.stream()
+                       .map(key -> Pair.create(key, controller.getPartitionReadCommand(key, executionController)))
+                       .collect(Collectors.toList());
+        }
+
+        @Override
+        public UnfilteredRowIterator commandToIterator(PrimaryKey key, SinglePartitionReadCommand command)
+        {
+            try (UnfilteredRowIterator partition = controller.initPartitionReadCommand(command, executionController))
+            {
+                queryContext.partitionsRead++;
+
+                return applyIndexFilter(key, partition, filterTree, queryContext);
+            }
         }
 
         /**
