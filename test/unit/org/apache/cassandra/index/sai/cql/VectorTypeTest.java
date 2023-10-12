@@ -736,7 +736,7 @@ public class VectorTypeTest extends VectorTester
         createIndex("CREATE CUSTOM INDEX ON %s(vec) USING 'StorageAttachedIndex' WITH OPTIONS = { 'similarity_function' : 'euclidean' }");
 
         // Put one row in the first ss table to guarantee brute force method. This vector is also the most similar.
-        execute("INSERT INTO %s (pk, vec) VALUES (10, [1,1])");
+        execute("INSERT INTO %s (pk, vec) VALUES (?, ?)", 10, vector(1f, 1f));
         flush();
 
         // Must be enough rows to go to graph
