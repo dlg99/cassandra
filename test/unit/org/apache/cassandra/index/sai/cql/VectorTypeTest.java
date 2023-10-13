@@ -750,6 +750,28 @@ public class VectorTypeTest extends VectorTester
     }
 
     @Test
+    public void testSamePKWithBruteForceAndOnDiskGraphBasedScoring()
+    {
+        createTable(KEYSPACE, "CREATE TABLE %s (pk int, vec vector<float, 2>, PRIMARY KEY(pk))");
+        // Use euclidean distance to more easily verify correctness of caching
+        createIndex("CREATE CUSTOM INDEX ON %s(vec) USING 'StorageAttachedIndex' WITH OPTIONS = { 'similarity_function' : 'euclidean' }");
+
+        // Put one row in the first ss table to guarantee brute force method. This vector is also the most similar.
+        execute("INSERT INTO %s (pk, vec) VALUES (?, ?)", 10, vector(1f, 1f));
+        flush();
+
+        // over 1024 vectors to guarantee PQ on disk
+        // Must be enough rows to go to graph
+        for (int j = 1; j <= 1100; j++)
+        {
+            execute("INSERT INTO %s (pk, vec) VALUES (?, ?)", j, vector((float) j, (float) j));
+        }
+        flush();
+
+        assertRows(execute("SELECT pk FROM %s ORDER BY vec ANN OF [1,1] LIMIT 2"), row(1), row(2));
+    }
+
+    @Test
     public void testRowWithMissingVectorThatMatchesQueryPredicates()
     {
         createTable(KEYSPACE, "CREATE TABLE %s (pk int, val text, vec vector<float, 2>, PRIMARY KEY(pk))");
