@@ -29,6 +29,7 @@ import java.util.NavigableSet;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
@@ -82,6 +83,9 @@ import static org.apache.cassandra.config.CassandraRelevantProperties.SAI_VECTOR
 
 public class QueryController
 {
+    // for initial testing
+    public static AtomicBoolean allowSpeculativeLimits = new AtomicBoolean(true);
+
     private static final Logger logger = LoggerFactory.getLogger(QueryController.class);
 
     public static final int ORDER_CHUNK_SIZE = SAI_VECTOR_SEARCH_ORDER_CHUNK_SIZE.getInt();
@@ -360,7 +364,21 @@ public class QueryController
 
     private int getLimit()
     {
-        return command.limits().count();
+        return allowSpeculativeLimits.get() ? getSpeculativeLimit() : command.limits().count();
+    }
+
+    private int getSpeculativeLimit()
+    {
+        var K = command.limits().count();
+        var M = queryContext.getShadowedPrimaryKeys().size();
+        if (M == 0) return K;
+
+        int limit = (float)M/K > 0.99f
+                    ? 100 * K
+                    : Math.round(K/(1 - (float)M/K));
+        if (logger.isDebugEnabled())
+            logger.debug("Increasing query limit to {} rows from {} to avoid repeated shadowed rows ", limit, K);
+        return limit;
     }
 
     public IndexFeatureSet indexFeatureSet()

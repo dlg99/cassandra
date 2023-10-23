@@ -121,9 +121,11 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         final long startShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
         while (true)
         {
+            queryContext.incShadowedKeysLoopCount();
             long lastShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             ResultRetriever result = queryIndexes.get();
-            UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator) new VectorTopKProcessor(command).filter(result);
+            var vtkp =  new VectorTopKProcessor(command);
+            UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)vtkp.filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             if (lastShadowedKeysCount == currentShadowedKeysCount)
