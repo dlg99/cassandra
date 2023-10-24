@@ -19,6 +19,7 @@
 package org.apache.cassandra.index.sai.cql;
 
 
+import java.util.Arrays;
 import javax.management.JMX;
 import javax.management.ObjectName;
 
@@ -79,7 +80,7 @@ public class ShadowedRowsLoopTest extends VectorTester
         // these will be returned by search
         for (int i = 0; i < vectorCount; i++)
         {
-            this.queryVector = randomVector();
+            this.queryVector = randomVector(vectorCount + i + 1, dimension);
             execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
                     vectorCount + i, Integer.toString(i), queryVector);
         }
@@ -92,7 +93,7 @@ public class ShadowedRowsLoopTest extends VectorTester
             for (int i = 0; i < vectorCount; i++)
             {
                 execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
-                        i, Integer.toString(i), randomVector());
+                        i, Integer.toString(i), randomVector(i + 1, dimension));
             }
             flush();
 
@@ -199,6 +200,13 @@ public class ShadowedRowsLoopTest extends VectorTester
     {
         ObjectName oName = objectNameNoIndex(metricName, keyspace(), currentTable(), PER_QUERY_METRIC_TYPE);
         return JMX.newMBeanProxy(jmxConnection, oName, CassandraMetricsRegistry.JmxHistogramMBean.class);
+    }
+
+    private static Vector<Float> randomVector(int x, int dimension)
+    {
+        Float[] rawVector = new Float[dimension];
+        Arrays.fill(rawVector, (float) x);
+        return new Vector<>(rawVector);
     }
 
     private Vector<Float> randomVector()
