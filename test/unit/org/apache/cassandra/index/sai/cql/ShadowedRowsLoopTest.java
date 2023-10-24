@@ -45,6 +45,7 @@ public class ShadowedRowsLoopTest extends VectorTester
     final int dimension = 11;
     final int limit = 5;
     final int N;
+    private Vector<Float> queryVector;
 
     @BeforeClass
     public static void beforeClass() throws Exception
@@ -57,6 +58,7 @@ public class ShadowedRowsLoopTest extends VectorTester
     public static Object[] data()
     {
         return new Object[] { 1, 3, 5, 10, 11, 13, 20, 50 };
+        //return new Object[] { 5 };
     }
 
     public ShadowedRowsLoopTest(int N)
@@ -77,8 +79,9 @@ public class ShadowedRowsLoopTest extends VectorTester
         // these will be returned by search
         for (int i = 0; i < vectorCount; i++)
         {
+            this.queryVector = randomVector();
             execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
-                    vectorCount + i, Integer.toString(i), randomVector());
+                    vectorCount + i, Integer.toString(i), queryVector);
         }
         flush();
 
@@ -106,16 +109,16 @@ public class ShadowedRowsLoopTest extends VectorTester
     @Test
     public void shadowedLoopTest() throws Throwable
     {
-        QueryController.allowSpeculativeLimits.set(false);
-        var q = randomVector();
-        search(q, limit);
 
+        QueryController.allowSpeculativeLimits.set(false);
+        search(queryVector, limit);
         Metrics resultNoSp = getMetrics();
         assertThat(resultNoSp.loops).isGreaterThan(0);
 
-        QueryController.allowSpeculativeLimits.set(true);
-        search(q, limit);
+        resetMetrics();
 
+        QueryController.allowSpeculativeLimits.set(true);
+        search(queryVector, limit);
         Metrics result = getMetrics();
         assertThat(result.loops).isGreaterThan(0);
 
@@ -128,24 +131,30 @@ public class ShadowedRowsLoopTest extends VectorTester
     private Metrics getMetrics() throws InterruptedException
     {
         long prev = -1;
-        long loops = 0;
-        long keys = 0;
+        long loops = -1;
+        long keys = -1;
 
         // poll for metric to be updated
-        for (int i = 0; i < 50; i++)
+        for (int i = 0; i < 100; i++)
         {
-            var loopsNoSpMetric = getQueryHistogram("ShadowedKeysLoopsHistogram");
-            var keysNoSpMetric = getQueryHistogram("ShadowedKeysScannedHistogram");
-            loops = loopsNoSpMetric.getCount();
-            keys = keysNoSpMetric.getMax();
+            var loopsMetric = getQueryHistogram("ShadowedKeysLoopsHistogram");
+            var keysMetric = getQueryHistogram("ShadowedKeysScannedHistogram");
+            loops = loopsMetric.getMax();
+            keys = keysMetric.getMax();
 
             if (loops > 0 && loops == prev)
                 break;
             prev = loops;
+            loops = -1;
+            keys = -1;
             Thread.sleep(300);
         }
-        final Metrics result = new Metrics(loops, keys);
+        return new Metrics(loops, keys);
+    }
 
+    private void resetMetrics() throws InterruptedException
+    {
+        long loops;
         getQueryHistogram("ShadowedKeysLoopsHistogram").clear();
         getQueryHistogram("ShadowedKeysScannedHistogram").clear();
 
@@ -153,15 +162,13 @@ public class ShadowedRowsLoopTest extends VectorTester
         for (int i = 0; i < 50; i++)
         {
             var loopsNoSpMetric = getQueryHistogram("ShadowedKeysLoopsHistogram");
-            loops = loopsNoSpMetric.getCount();
+            loops = loopsNoSpMetric.getMax();
 
             if (loops == 0)
                 break;
             Thread.sleep(300);
         }
-        assertThat(getQueryHistogram("ShadowedKeysLoopsHistogram").getCount()).isEqualTo(0);
-
-        return result;
+        assertThat(getQueryHistogram("ShadowedKeysLoopsHistogram").getMax()).isEqualTo(0);
     }
 
     private static class Metrics
