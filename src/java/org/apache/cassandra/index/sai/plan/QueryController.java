@@ -83,9 +83,6 @@ import static org.apache.cassandra.config.CassandraRelevantProperties.SAI_VECTOR
 
 public class QueryController
 {
-    // for initial testing
-    public static AtomicBoolean allowSpeculativeLimits = new AtomicBoolean(true);
-
     private static final Logger logger = LoggerFactory.getLogger(QueryController.class);
 
     public static final int ORDER_CHUNK_SIZE = SAI_VECTOR_SEARCH_ORDER_CHUNK_SIZE.getInt();
@@ -362,23 +359,9 @@ public class QueryController
         return RangeUnionIterator.builder(subIterators.size()).add(subIterators).build();
     }
 
-    private int getLimit()
+    public int getLimit()
     {
-        return allowSpeculativeLimits.get() ? getSpeculativeLimit() : command.limits().count();
-    }
-
-    private int getSpeculativeLimit()
-    {
-        var K = command.limits().count();
-        var M = queryContext.getShadowedPrimaryKeys().size();
-        if (M == 0) return K;
-
-        int limit = (float)M/K > 0.99f
-                    ? 100 * K
-                    : Math.round(K/(1 - (float)M/K));
-        if (logger.isDebugEnabled())
-            logger.debug("Increasing query limit to {} rows from {} to avoid repeated shadowed rows ", limit, K);
-        return limit;
+        return command.limits().count();
     }
 
     public IndexFeatureSet indexFeatureSet()

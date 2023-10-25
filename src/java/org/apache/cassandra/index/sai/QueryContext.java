@@ -46,7 +46,7 @@ import org.apache.cassandra.index.sai.utils.PrimaryKey;
 @NotThreadSafe
 public class QueryContext
 {
-    private static final boolean DISABLE_TIMEOUT = true; //Boolean.getBoolean("cassandra.sai.test.disable.timeout");
+    private static final boolean DISABLE_TIMEOUT = Boolean.getBoolean("cassandra.sai.test.disable.timeout");
 
     private final long queryStartTimeNanos;
 
