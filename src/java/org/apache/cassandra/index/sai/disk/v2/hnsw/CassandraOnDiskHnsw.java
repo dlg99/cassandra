@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
 import java.util.stream.IntStream;
 import javax.annotation.concurrent.NotThreadSafe;
 
@@ -97,7 +98,7 @@ public class CassandraOnDiskHnsw implements JVectorLuceneOnDiskGraph, AutoClosea
      * @return Row IDs associated with the topK vectors near the query
      */
     @Override
-    public VectorPostingList search(float[] queryVector, int topK, int limit, Bits acceptBits, QueryContext context)
+    public VectorPostingList search(float[] queryVector, int topK, ToIntFunction<Boolean> limit, Bits acceptBits, QueryContext context)
     {
         CassandraOnHeapGraph.validateIndexable(queryVector, similarityFunction);
 
@@ -163,7 +164,7 @@ public class CassandraOnDiskHnsw implements JVectorLuceneOnDiskGraph, AutoClosea
         }
     }
 
-    private VectorPostingList annRowIdsToPostings(NeighborQueue queue, int limit) throws IOException
+    private VectorPostingList annRowIdsToPostings(NeighborQueue queue, ToIntFunction<Boolean> limit) throws IOException
     {
         try (var iterator = new RowIdIterator(queue))
         {

@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
@@ -203,7 +204,7 @@ public class VectorMemtableIndex implements MemtableIndex
     }
 
     @Override
-    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, int limit)
+    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, ToIntFunction<Boolean> limit)
     {
         if (minimumKey == null)
             // This case implies maximumKey is empty too.
@@ -214,11 +215,13 @@ public class VectorMemtableIndex implements MemtableIndex
                                       .takeWhile(k -> k.compareTo(maximumKey) <= 0)
                                       .collect(Collectors.toList());
 
-        int maxBruteForceRows = maxBruteForceRows(limit, results.size(), graph.size());
-        logger.trace("SAI materialized {} rows; max brute force rows is {} for memtable index with {} nodes, LIMIT {}",
-                     results.size(), maxBruteForceRows, graph.size(), limit);
-        Tracing.trace("SAI materialized {} rows; max brute force rows is {} for memtable index with {} nodes, LIMIT {}",
-                      results.size(), maxBruteForceRows, graph.size(), limit);
+        int maxBruteForceRows = maxBruteForceRows(limit.applyAsInt(false), results.size(), graph.size());
+        if (logger.isTraceEnabled())
+            logger.trace("SAI materialized {} rows; max brute force rows is {} for memtable index with {} nodes, LIMIT {}",
+                     results.size(), maxBruteForceRows, graph.size(), limit.applyAsInt(false));
+        if (Tracing.isTracing())
+            Tracing.trace("SAI materialized {} rows; max brute force rows is {} for memtable index with {} nodes, LIMIT {}",
+                      results.size(), maxBruteForceRows, graph.size(), limit.applyAsInt(false));
         if (results.size() <= maxBruteForceRows)
         {
             if (results.isEmpty())
@@ -228,7 +231,7 @@ public class VectorMemtableIndex implements MemtableIndex
 
         float[] qv = exp.lower.value.vector;
         var bits = new KeyFilteringBits(results);
-        var keyQueue = graph.search(qv, limit, bits);
+        var keyQueue = graph.search(qv, limit.applyAsInt(true), bits);
         if (keyQueue.isEmpty())
             return RangeIterator.empty();
         return new ReorderingRangeIterator(keyQueue);

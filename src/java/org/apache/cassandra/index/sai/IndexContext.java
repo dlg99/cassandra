@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.ToIntFunction;
 
 import javax.annotation.Nonnull;
 
@@ -300,7 +301,7 @@ public class IndexContext
     }
 
     // Search all memtables for all PrimaryKeys in list.
-    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> source, Expression e, int limit)
+    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> source, Expression e, ToIntFunction<Boolean> limit)
     {
         Collection<MemtableIndex> memtables = liveMemtables.values();
 

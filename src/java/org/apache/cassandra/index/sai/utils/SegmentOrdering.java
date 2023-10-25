@@ -20,6 +20,7 @@ package org.apache.cassandra.index.sai.utils;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.function.ToIntFunction;
 
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.index.sai.QueryContext;
@@ -50,7 +51,7 @@ public interface SegmentOrdering
     /**
      * Order and limit a list of primary keys to the top results.
      */
-    default RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, int limit) throws IOException
+    default RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, ToIntFunction<Boolean> limit) throws IOException
     {
         throw new UnsupportedOperationException();
     }

@@ -21,6 +21,7 @@ package org.apache.cassandra.index.sai.disk.v1;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.function.ToIntFunction;
 
 import com.google.common.collect.ImmutableList;
 
@@ -163,7 +164,7 @@ public class V1SearchableIndex implements SearchableIndex
                                 AbstractBounds<PartitionPosition> keyRange,
                                 QueryContext context,
                                 boolean defer,
-                                int limit) throws IOException
+                                ToIntFunction<Boolean> limit) throws IOException
     {
         RangeConcatIterator.Builder rangeConcatIteratorBuilder = RangeConcatIterator.builder(segments.size());
 
@@ -179,7 +180,7 @@ public class V1SearchableIndex implements SearchableIndex
     }
 
     @Override
-    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, int limit) throws IOException
+    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, ToIntFunction<Boolean> limit) throws IOException
     {
         RangeConcatIterator.Builder concatIteratorBuilder = RangeConcatIterator.builder(segments.size());
         for (Segment segment : segments)

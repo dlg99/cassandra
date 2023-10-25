@@ -24,6 +24,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.ToIntFunction;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
@@ -142,7 +143,7 @@ public class SSTableIndex implements SegmentOrdering
                                 AbstractBounds<PartitionPosition> keyRange,
                                 QueryContext context,
                                 boolean defer,
-                                int limit) throws IOException
+                                ToIntFunction<Boolean> limit) throws IOException
     {
         return searchableIndex.search(expression, keyRange, context, defer, limit);
     }
@@ -226,7 +227,7 @@ public class SSTableIndex implements SegmentOrdering
     }
 
     @Override
-    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, int limit) throws IOException
+    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, ToIntFunction<Boolean> limit) throws IOException
     {
         return searchableIndex.limitToTopResults(context, keys, exp, limit);
     }

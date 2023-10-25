@@ -20,6 +20,7 @@ package org.apache.cassandra.index.sai.disk.v1.postings;
 
 import java.io.IOException;
 import java.util.PrimitiveIterator;
+import java.util.function.ToIntFunction;
 
 import org.apache.cassandra.index.sai.disk.PostingList;
 import org.apache.lucene.util.LongHeap;
@@ -33,12 +34,12 @@ public class VectorPostingList implements PostingList
     private final int size;
     private final int visitedCount;
 
-    public VectorPostingList(PrimitiveIterator.OfInt source, int limit, int visitedCount)
+    public VectorPostingList(PrimitiveIterator.OfInt source, ToIntFunction<Boolean> limit, int visitedCount)
     {
         this.visitedCount = visitedCount;
-        segmentRowIds = new LongHeap(Math.max(limit, 1));
+        segmentRowIds = new LongHeap(Math.max(limit.applyAsInt(false), 1));
         int n = 0;
-        while (source.hasNext() && n++ < limit)
+        while (source.hasNext() && n++ < limit.applyAsInt(false))
             segmentRowIds.push(source.nextInt());
         this.size = n;
     }
