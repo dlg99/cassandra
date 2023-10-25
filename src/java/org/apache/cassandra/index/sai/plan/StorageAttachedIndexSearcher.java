@@ -124,12 +124,11 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             queryContext.incShadowedKeysLoopCount();
             long lastShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             ResultRetriever result = queryIndexes.get();
-            var vtkp =  new VectorTopKProcessor(command, controller::getLimit);
+            var vtkp =  new VectorTopKProcessor(command);
             UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)vtkp.filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
-            if (lastShadowedKeysCount == currentShadowedKeysCount
-                || (vtkp.getSoftLimit() == controller.getLimit(false) && vtkp.getSoftLimit() > controller.getLimit(true) + currentShadowedKeysCount))
+            if (lastShadowedKeysCount == currentShadowedKeysCount)
             {
                 cfs.metric.incShadowedKeys(loopsCount, currentShadowedKeysCount - startShadowedKeysCount);
                 if (loopsCount > 1)

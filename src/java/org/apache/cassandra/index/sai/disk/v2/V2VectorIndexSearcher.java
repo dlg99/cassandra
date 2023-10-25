@@ -20,7 +20,6 @@ package org.apache.cassandra.index.sai.disk.v2;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.List;
-import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -104,13 +103,13 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     }
 
     @Override
-    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, ToIntFunction<Boolean> limit) throws IOException
+    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, int limit) throws IOException
     {
         PostingList results = searchPosting(context, exp, keyRange, limit);
         return toPrimaryKeyIterator(results, context);
     }
 
-    private PostingList searchPosting(QueryContext context, Expression exp, AbstractBounds<PartitionPosition> keyRange, ToIntFunction<Boolean> limit) throws IOException
+    private PostingList searchPosting(QueryContext context, Expression exp, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
     {
         if (logger.isTraceEnabled())
             logger.trace(indexContext.logMessage("Searching on expression '{}'..."), exp);
@@ -118,7 +117,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         if (exp.getOp() != Expression.Op.ANN)
             throw new IllegalArgumentException(indexContext.logMessage("Unsupported expression during ANN index query: " + exp));
 
-        int topK = topKFor(limit.applyAsInt(false));
+        int topK = topKFor(limit);
         BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, topK);
         if (bitsOrPostingList.skipANN())
             return bitsOrPostingList.postingList();
@@ -272,7 +271,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     }
 
     @Override
-    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, ToIntFunction<Boolean> limit) throws IOException
+    public RangeIterator limitToTopResults(QueryContext context, List<PrimaryKey> keys, Expression exp, int limit) throws IOException
     {
         // VSTODO would it be better to do a binary search to find the boundaries?
         List<PrimaryKey> keysInRange = keys.stream()
@@ -281,8 +280,8 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                                            .collect(Collectors.toList());
         if (keysInRange.isEmpty())
             return RangeIterator.empty();
-        int topK = topKFor(limit.applyAsInt(false));
-        if (shouldUseBruteForce(topK, limit.applyAsInt(true), keysInRange.size()))
+        int topK = topKFor(limit);
+        if (shouldUseBruteForce(topK, limit, keysInRange.size()))
             return new ListRangeIterator(metadata.minKey, metadata.maxKey, keysInRange);
 
         try (PrimaryKeyMap primaryKeyMap = primaryKeyMapFactory.newPerSSTablePrimaryKeyMap())
@@ -316,7 +315,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                 }
             }
 
-            if (shouldUseBruteForce(topK, limit.applyAsInt(true), rowIds.size()))
+            if (shouldUseBruteForce(topK, limit, rowIds.size()))
                 return toPrimaryKeyIterator(new ArrayPostingList(rowIds.toIntArray()), context);
 
             // else ask the index to perform a search limited to the bits we created

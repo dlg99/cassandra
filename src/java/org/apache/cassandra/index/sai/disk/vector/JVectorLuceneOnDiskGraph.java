@@ -19,7 +19,6 @@
 package org.apache.cassandra.index.sai.disk.vector;
 
 import java.io.IOException;
-import java.util.function.ToIntFunction;
 
 import io.github.jbellis.jvector.util.Bits;
 import org.apache.cassandra.index.sai.QueryContext;
@@ -39,7 +38,7 @@ public interface JVectorLuceneOnDiskGraph extends AutoCloseable
     /**
      * See CassandraDiskANN::search
      */
-    VectorPostingList search(float[] queryVector, int topK, ToIntFunction<Boolean> limit, Bits bits, QueryContext context);
+    VectorPostingList search(float[] queryVector, int topK, int limit, Bits bits, QueryContext context);
 
     void close() throws IOException;
 }

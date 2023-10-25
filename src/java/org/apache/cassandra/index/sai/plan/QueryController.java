@@ -240,7 +240,7 @@ public class QueryController
             for (Map.Entry<Expression, NavigableSet<SSTableIndex>> e : view)
             {
                 @SuppressWarnings("resource") // RangeIterators are closed by releaseIndexes
-                RangeIterator index = TermIterator.build(e.getKey(), e.getValue(), mergeRange, queryContext, defer, this::getLimit);
+                RangeIterator index = TermIterator.build(e.getKey(), e.getValue(), mergeRange, queryContext, defer, getLimit());
 
                 builder.add(index);
             }
@@ -262,7 +262,7 @@ public class QueryController
         var planExpression = new Expression(getContext(expression))
                              .add(Operator.ANN, expression.getIndexValue().duplicate());
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, getLimit(true));
+        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, getLimit());
 
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
@@ -300,7 +300,7 @@ public class QueryController
         planExpression.add(Operator.ANN, expression.getIndexValue().duplicate());
 
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, this::getLimit);
+        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, getLimit());
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
         try
@@ -330,7 +330,7 @@ public class QueryController
 
         try
         {
-            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, this::getLimit);
+            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, getLimit());
         }
         catch (IOException e)
         {
@@ -349,7 +349,7 @@ public class QueryController
                                     {
                                         try
                                         {
-                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, this::getLimit);
+                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, getLimit());
                                         }
                                         catch (Throwable ex)
                                         {
@@ -362,12 +362,9 @@ public class QueryController
         return RangeUnionIterator.builder(subIterators.size()).add(subIterators).build();
     }
 
-    public int getLimit(boolean isExact)
+    private int getLimit()
     {
-        return !isExact && allowSpeculativeLimits.get()
-        //return allowSpeculativeLimits.get()
-                ? getSpeculativeLimit()
-                : command.limits().count();
+        return allowSpeculativeLimits.get() ? getSpeculativeLimit() : command.limits().count();
     }
 
     private int getSpeculativeLimit()
@@ -376,8 +373,8 @@ public class QueryController
         var M = queryContext.getShadowedPrimaryKeys().size();
         if (M == 0) return K;
 
-        int limit = (float)M/K > 0.9f
-                    ? 10 * K
+        int limit = (float)M/K > 0.99f
+                    ? 100 * K
                     : Math.round(K/(1 - (float)M/K));
         if (logger.isDebugEnabled())
             logger.debug("Increasing query limit to {} rows from {} to avoid repeated shadowed rows ", limit, K);

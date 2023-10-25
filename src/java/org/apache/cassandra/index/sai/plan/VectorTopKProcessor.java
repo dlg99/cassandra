@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.function.ToIntFunction;
 import javax.annotation.Nullable;
 
 import com.google.common.base.Preconditions;
@@ -74,12 +73,11 @@ public class VectorTopKProcessor
     private final IndexContext indexContext;
     private final float[] queryVector;
 
-    private final ToIntFunction<Boolean> limit;
+    private final int limit;
 
     private int rowCount = 0;
-    private int softLimit = 0;
 
-    public VectorTopKProcessor(ReadCommand command, ToIntFunction<Boolean> limit)
+    public VectorTopKProcessor(ReadCommand command)
     {
         this.command = command;
 
@@ -88,7 +86,7 @@ public class VectorTopKProcessor
 
         this.indexContext = annIndexAndExpression.left;
         this.queryVector = annIndexAndExpression.right;
-        this.limit = limit;
+        this.limit = command.limits().count();
     }
 
     /**
@@ -99,10 +97,7 @@ public class VectorTopKProcessor
     {
         // priority queue ordered by score in ascending order. We fill the queue with at most limit + 1 rows, so that we
         // can then remove the lowest score row when exceeding limit. The capacity is limit + 1 to prevent resizing.
-
-        softLimit = limit.applyAsInt(false);
-
-        PriorityQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityQueue<>(softLimit + 1, Comparator.comparing(Triple::getRight));
+        PriorityQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityQueue<>(limit + 1, Comparator.comparing(Triple::getRight));
         // to store top-k results in primary key order
         TreeMap<PartitionInfo, TreeSet<Unfiltered>> unfilteredByPartition = new TreeMap<>(Comparator.comparing(p -> p.key));
 
@@ -133,16 +128,12 @@ public class VectorTopKProcessor
                     topK.add(Triple.of(partitionInfo, row, keyAndStaticScore + rowScore));
 
                     // when exceeding limit, remove row with low score
-                    while (topK.size() > softLimit)
+                    while (topK.size() > limit)
                         topK.poll();
                 }
             }
         }
         partitions.close();
-
-        final int hardLimit = limit.applyAsInt(true);
-        while (topK.size() > hardLimit)
-            topK.poll();
 
         // reorder rows in partition/clustering order
         for (Triple<PartitionInfo, Row, Float> triple : topK)
@@ -162,11 +153,6 @@ public class VectorTopKProcessor
     public int rowCount()
     {
         return rowCount;
-    }
-
-    public int getSoftLimit()
-    {
-        return softLimit;
     }
 
     /**

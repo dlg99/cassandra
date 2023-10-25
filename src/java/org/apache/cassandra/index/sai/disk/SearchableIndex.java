@@ -21,7 +21,6 @@ package org.apache.cassandra.index.sai.disk;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.function.ToIntFunction;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.PartitionPosition;
@@ -63,7 +62,7 @@ public interface SearchableIndex extends Closeable, SegmentOrdering
     public RangeIterator search(Expression expression,
                                 AbstractBounds<PartitionPosition> keyRange,
                                 QueryContext context,
-                                boolean defer, ToIntFunction<Boolean> limit) throws IOException;
+                                boolean defer, int limit) throws IOException;
 
     public void populateSystemView(SimpleDataSet dataSet, SSTableReader sstable);
 }

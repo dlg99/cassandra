@@ -20,7 +20,6 @@ package org.apache.cassandra.index.sai.cql;
 
 
 import java.util.Arrays;
-import java.util.stream.Collectors;
 import javax.management.JMX;
 import javax.management.ObjectName;
 
@@ -33,6 +32,7 @@ import org.junit.runners.Parameterized;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.index.sai.plan.QueryController;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
+import org.assertj.core.data.Percentage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,9 +42,9 @@ public class ShadowedRowsLoopTest extends VectorTester
 {
     private static final String PER_QUERY_METRIC_TYPE = "PerQuery";
 
-    final static int vectorCount = 500;
-    final static int dimension = 10;
-    final int limit;
+    final int vectorCount = 100;
+    final int dimension = 11;
+    final int limit = 5;
     final int N;
     private Vector<Float> queryVector;
 
@@ -56,22 +56,15 @@ public class ShadowedRowsLoopTest extends VectorTester
     }
 
     @Parameterized.Parameters
-    public static Object[][] data()
+    public static Object[] data()
     {
-        return Arrays
-                .stream(new int[]{ 1, 5, 10, 15 })
-                .mapToObj(N -> Arrays.stream(new int[]{ 5, 20, 100 })
-                                    .mapToObj(limit -> new Object[]{ N, limit })
-                                    .toArray())
-                .flatMap(Arrays::stream)
-                .collect(Collectors.toList())
-                .toArray(new Object[][]{});
+        return new Object[] { 1, 3, 5, 10, 11, 13, 20, 50 };
+        //return new Object[] { 5 };
     }
 
-    public ShadowedRowsLoopTest(int N, int limit)
+    public ShadowedRowsLoopTest(int N)
     {
         this.N = N;
-        this.limit = limit;
     }
 
     @Before
@@ -79,20 +72,17 @@ public class ShadowedRowsLoopTest extends VectorTester
     {
         super.beforeTest();
 
-        final int liveVectorsNum = vectorCount + 10 * limit;
-
         createTable(String.format("CREATE TABLE %%s (pk int, str_val text, val vector<float, %d>, PRIMARY KEY(pk))", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
         waitForIndexQueryable();
 
         // insert records with pk starting at vectorCount, flush
         // these will be returned by search
-        for (int i = 0; i < liveVectorsNum; i++)
+        for (int i = 0; i < vectorCount; i++)
         {
-            //this.queryVector = randomVector(liveVectorsNum + i + 1, dimension);
-            this.queryVector = randomVector();
+            this.queryVector = randomVector(vectorCount + i + 1, dimension);
             execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
-                    liveVectorsNum + i, Integer.toString(i), queryVector);
+                    vectorCount + i, Integer.toString(i), queryVector);
         }
         flush();
 
@@ -103,7 +93,7 @@ public class ShadowedRowsLoopTest extends VectorTester
             for (int i = 0; i < vectorCount; i++)
             {
                 execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
-                        i, Integer.toString(i), randomVector());
+                        i, Integer.toString(i), randomVector(i + 1, dimension));
             }
             flush();
 
@@ -115,13 +105,12 @@ public class ShadowedRowsLoopTest extends VectorTester
             }
             flush();
         }
-
-        this.queryVector = randomVector();
     }
 
     @Test
     public void shadowedLoopTest() throws Throwable
     {
+
         QueryController.allowSpeculativeLimits.set(false);
         search(queryVector, limit);
         Metrics resultNoSp = getMetrics();
@@ -134,11 +123,10 @@ public class ShadowedRowsLoopTest extends VectorTester
         Metrics result = getMetrics();
         assertThat(result.loops).isGreaterThan(0);
 
-        logger.info("N: {}, limit: {}; Got loops {} -> {}, keys {} -> {}",
-                    N, limit, resultNoSp.loops, result.loops, resultNoSp.keys, result.keys);
+        logger.info("N: {}; loops {} -> {}, keys {} -> {}",
+                    N, resultNoSp.loops, result.loops, resultNoSp.keys, result.keys);
 
         assertThat(result.loops).isLessThan(resultNoSp.loops);
-        //assertThat(result.loops).isLessThanOrEqualTo(resultNoSp.loops);
     }
 
     private Metrics getMetrics() throws InterruptedException
@@ -198,7 +186,9 @@ public class ShadowedRowsLoopTest extends VectorTester
 
     private UntypedResultSet search(Vector<Float> queryVector, int limit) throws Throwable
     {
-        return execute("SELECT * FROM %s ORDER BY val ann of ? LIMIT " + limit, queryVector);
+        UntypedResultSet result = execute("SELECT * FROM %s ORDER BY val ann of ? LIMIT " + limit, queryVector);
+        assertThat(result.size()).isCloseTo(limit, Percentage.withPercentage(5));
+        return result;
     }
 
     private long getQueryMetrics(String metricsName) throws Exception

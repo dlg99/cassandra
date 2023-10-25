@@ -20,7 +20,6 @@ package org.apache.cassandra.index.sai.disk.v1;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
-import java.util.function.ToIntFunction;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -54,7 +53,7 @@ import static org.mockito.Mockito.when;
 
 public class InvertedIndexSearcherTest extends SaiRandomizedTest
 {
-    public static final ToIntFunction<Boolean> LIMIT = (x) -> Integer.MAX_VALUE;
+    public static final int LIMIT = Integer.MAX_VALUE;
 
     @BeforeClass
     public static void setupCQLTester()

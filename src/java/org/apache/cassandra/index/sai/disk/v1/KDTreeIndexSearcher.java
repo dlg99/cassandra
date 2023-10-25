@@ -19,7 +19,6 @@ package org.apache.cassandra.index.sai.disk.v1;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
-import java.util.function.ToIntFunction;
 
 import com.google.common.base.MoreObjects;
 import org.slf4j.Logger;
@@ -79,7 +78,7 @@ public class KDTreeIndexSearcher extends IndexSearcher
     }
 
     @Override
-    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, ToIntFunction<Boolean> limit) throws IOException
+    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, int limit) throws IOException
 {
         PostingList postingList = searchPosting(exp, context);
         return toPrimaryKeyIterator(postingList, context);

@@ -20,7 +20,6 @@ package org.apache.cassandra.index.sai.utils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -66,11 +65,11 @@ public class TermIterator extends RangeIterator
     }
 
     @SuppressWarnings("resource")
-    public static TermIterator build(final Expression e, Set<SSTableIndex> perSSTableIndexes, AbstractBounds<PartitionPosition> keyRange, QueryContext queryContext, boolean defer, ToIntFunction<Boolean> limit)
+    public static TermIterator build(final Expression e, Set<SSTableIndex> perSSTableIndexes, AbstractBounds<PartitionPosition> keyRange, QueryContext queryContext, boolean defer, int limit)
     {
         final List<RangeIterator> tokens = new ArrayList<>(1 + perSSTableIndexes.size());;
 
-        RangeIterator memtableIterator = e.context.searchMemtable(queryContext, e, keyRange, limit.applyAsInt(true));
+        RangeIterator memtableIterator = e.context.searchMemtable(queryContext, e, keyRange, limit);
         if (memtableIterator != null)
             tokens.add(memtableIterator);
 

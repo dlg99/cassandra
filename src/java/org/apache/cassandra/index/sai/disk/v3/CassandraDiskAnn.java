@@ -23,7 +23,6 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
-import java.util.function.ToIntFunction;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
@@ -106,7 +105,7 @@ public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
      * @param context unused (vestige from HNSW, retained in signature to allow calling both easily)
      */
     @Override
-    public VectorPostingList search(float[] queryVector, int topK, ToIntFunction<Boolean> limit, Bits acceptBits, QueryContext context)
+    public VectorPostingList search(float[] queryVector, int topK, int limit, Bits acceptBits, QueryContext context)
     {
         CassandraOnHeapGraph.validateIndexable(queryVector, similarityFunction);
 
@@ -177,7 +176,7 @@ public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
         }
     }
 
-    private VectorPostingList annRowIdsToPostings(SearchResult results, ToIntFunction<Boolean> limit)
+    private VectorPostingList annRowIdsToPostings(SearchResult results, int limit)
     {
         try (var iterator = new RowIdIterator(results.getNodes()))
         {

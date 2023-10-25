@@ -21,7 +21,6 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.function.Function;
-import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
@@ -50,7 +49,7 @@ public class KDTreeIndexSearcherTest extends SaiRandomizedTest
     private static final short RANGE_TEST_LOWER_BOUND_INCLUSIVE = 0;
     private static final short RANGE_TEST_UPPER_BOUND_EXCLUSIVE = 10;
 
-    public static final ToIntFunction<Boolean> LIMIT = (x) -> Integer.MAX_VALUE;
+    public static final int LIMIT = Integer.MAX_VALUE;
 
     @Test
     public void testRangeQueriesAgainstInt32Index() throws Exception
