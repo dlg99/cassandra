@@ -128,6 +128,8 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)vtkp.filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
+            // Stop if no new shadowed keys found
+            // or if we already tried to search beyond the limit for more than the limit + count of new shadowed keys
             if (lastShadowedKeysCount == currentShadowedKeysCount
                 || (vtkp.getUsedSoftLimit() == vtkp.currentSoftLimitEstimate()
                     && vtkp.getUsedSoftLimit() >= (vtkp.getExactLimit() + currentShadowedKeysCount - lastShadowedKeysCount)))

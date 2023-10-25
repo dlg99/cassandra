@@ -29,7 +29,6 @@ import java.util.NavigableSet;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
@@ -359,7 +358,7 @@ public class QueryController
         return RangeUnionIterator.builder(subIterators.size()).add(subIterators).build();
     }
 
-    public int getLimit()
+    private int getLimit()
     {
         return command.limits().count();
     }
