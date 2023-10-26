@@ -362,7 +362,7 @@ public class QueryController
         return RangeUnionIterator.builder(subIterators.size()).add(subIterators).build();
     }
 
-    private int getExactLimit()
+    public int getExactLimit()
     {
         return command.limits().count();
     }

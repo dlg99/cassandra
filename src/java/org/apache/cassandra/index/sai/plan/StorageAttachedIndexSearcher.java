@@ -119,20 +119,20 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         // First time to find out there are shadowed keys, second time to find out there are no more shadow keys.
         int loopsCount = 1;
         final long startShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
+        final var exactLimit = controller.getExactLimit();
         while (true)
         {
             queryContext.incShadowedKeysLoopCount();
             long lastShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
+            final var softLimit = controller.currentSoftLimitEstimate();
             ResultRetriever result = queryIndexes.get();
-            var vtkp =  new VectorTopKProcessor(command, controller.currentSoftLimitEstimate());
-            UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)vtkp.filter(result);
+            UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)new VectorTopKProcessor(command).filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             long newShadowedKeysCount = currentShadowedKeysCount - lastShadowedKeysCount;
             // Stop if no new shadowed keys found
             // or if we already tried to search beyond the limit for more than the limit + count of new shadowed keys
-            if (newShadowedKeysCount == 0
-                || vtkp.getExactLimit() <= vtkp.getUsedSoftLimit() - newShadowedKeysCount)
+            if (newShadowedKeysCount == 0 || exactLimit <= softLimit - newShadowedKeysCount)
             {
                 cfs.metric.incShadowedKeys(loopsCount, currentShadowedKeysCount - startShadowedKeysCount);
                 if (loopsCount > 1)
