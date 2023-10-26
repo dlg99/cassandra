@@ -132,8 +132,7 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             // Stop if no new shadowed keys found
             // or if we already tried to search beyond the limit for more than the limit + count of new shadowed keys
             if (newShadowedKeysCount == 0
-                || (vtkp.getExactLimit() < newShadowedKeysCount + vtkp.rowCount()
-                    && vtkp.getUsedSoftLimit() > vtkp.getExactLimit() + newShadowedKeysCount))
+                || vtkp.getExactLimit() <= vtkp.getUsedSoftLimit() - newShadowedKeysCount)
             {
                 cfs.metric.incShadowedKeys(loopsCount, currentShadowedKeysCount - startShadowedKeysCount);
                 if (loopsCount > 1)
