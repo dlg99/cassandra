@@ -259,8 +259,9 @@ public class QueryController
         assert expression.operator() == Operator.ANN;
         var planExpression = new Expression(getContext(expression))
                              .add(Operator.ANN, expression.getIndexValue().duplicate());
+        int limit = currentSoftLimitEstimate();
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, currentSoftLimitEstimate());
+        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, limit);
 
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
@@ -268,7 +269,7 @@ public class QueryController
         {
             List<RangeIterator> sstableIntersections = queryView.view.values()
                                                                                  .stream()
-                                                                                 .map(e -> createRowIdIterator(e, true))
+                                                                                 .map(e -> createRowIdIterator(e, true, limit))
                                                                                  .collect(Collectors.toList());
             return TermIterator.build(sstableIntersections, memtableResults, queryView.referencedIndexes, queryContext);
         }
@@ -297,8 +298,9 @@ public class QueryController
         var planExpression = new Expression(this.getContext(expression));
         planExpression.add(Operator.ANN, expression.getIndexValue().duplicate());
 
+        int limit = currentSoftLimitEstimate();
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, currentSoftLimitEstimate());
+        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, limit);
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
         try
@@ -306,7 +308,7 @@ public class QueryController
             List<RangeIterator> sstableIntersections = queryView.view.values()
                                                                      .stream()
                                                                      .map(e -> {
-                                                                         return reorderAndLimitBySSTableRowIds(sourceKeys, e);
+                                                                         return reorderAndLimitBySSTableRowIds(sourceKeys, e, limit);
                                                                      })
                                                                      .collect(Collectors.toList());
 
@@ -321,14 +323,14 @@ public class QueryController
 
     }
 
-    private RangeIterator reorderAndLimitBySSTableRowIds(List<PrimaryKey> keys, List<QueryViewBuilder.IndexExpression> annIndexExpressions)
+    private RangeIterator reorderAndLimitBySSTableRowIds(List<PrimaryKey> keys, List<QueryViewBuilder.IndexExpression> annIndexExpressions, int limit)
     {
         assert annIndexExpressions.size() == 1 : "only one index is expected in ANN expression, found " + annIndexExpressions.size() + " in " + annIndexExpressions;
         QueryViewBuilder.IndexExpression annIndexExpression = annIndexExpressions.get(0);
 
         try
         {
-            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, currentSoftLimitEstimate());
+            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, limit);
         }
         catch (IOException e)
         {
@@ -339,7 +341,7 @@ public class QueryController
     /**
      * Create row id iterator from different indexes' on-disk searcher of the same sstable
      */
-    private RangeIterator createRowIdIterator(List<QueryViewBuilder.IndexExpression> indexExpressions, boolean defer)
+    private RangeIterator createRowIdIterator(List<QueryViewBuilder.IndexExpression> indexExpressions, boolean defer, int limit)
     {
         var subIterators = indexExpressions
                            .stream()
@@ -347,7 +349,7 @@ public class QueryController
                                     {
                                         try
                                         {
-                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, currentSoftLimitEstimate());
+                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, limit);
                                         }
                                         catch (Throwable ex)
                                         {
@@ -360,7 +362,7 @@ public class QueryController
         return RangeUnionIterator.builder(subIterators.size()).add(subIterators).build();
     }
 
-    private int getLimit()
+    private int getExactLimit()
     {
         return command.limits().count();
     }
@@ -369,9 +371,9 @@ public class QueryController
      * Estimate suggestion for the limit to search extra rows in case if some rows were shadowed.
      * @return
      */
-    public int currentSoftLimitEstimate()
+    int currentSoftLimitEstimate()
     {
-        var K = getLimit();
+        var K = getExactLimit();
         if (!allowSpeculativeLimits)
             return K;
 
