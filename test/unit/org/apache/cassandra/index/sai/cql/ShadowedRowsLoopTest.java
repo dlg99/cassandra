@@ -19,7 +19,9 @@
 package org.apache.cassandra.index.sai.cql;
 
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 import javax.management.JMX;
 import javax.management.ObjectName;
@@ -31,6 +33,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.index.sai.plan.QueryController;
 import org.apache.cassandra.index.sai.plan.VectorTopKProcessor;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 
@@ -42,10 +45,13 @@ public class ShadowedRowsLoopTest extends VectorTester
 {
     private static final String PER_QUERY_METRIC_TYPE = "PerQuery";
 
-    final static int vectorCount = 100;
+    final static int vectorCount = 50;
     final static int dimension = 10;
-    final int limit;
     final int N;
+    final int isOnDisk;
+
+    final static int MAX_LIMIT = 200;
+    final int liveVectorsNum;
     private Vector<Float> queryVector;
 
     @BeforeClass
@@ -58,20 +64,23 @@ public class ShadowedRowsLoopTest extends VectorTester
     @Parameterized.Parameters
     public static Object[][] data()
     {
-        return Arrays
-               .stream(new int[]{ 1, 5, 13 })
-               .mapToObj(N -> Arrays.stream(new int[]{ 2, 5, 20, 50, 200 })
-                                    .mapToObj(limit -> new Object[]{ N, limit })
-                                    .toArray())
-               .flatMap(Arrays::stream)
-               .collect(Collectors.toList())
-               .toArray(new Object[][]{});
+        List<Object[]> result = new ArrayList<>();
+        for (int N: new int[]{ 1, 5, 13 } )
+        {
+            for (int isOnDisk: new int[]{ 0, 1, 2, 3 })
+            {
+                result.add(new Object[]{ N, isOnDisk });
+            }
+        }
+
+        return result.toArray(Object[][]::new);
     }
 
-    public ShadowedRowsLoopTest(int N, int limit)
+    public ShadowedRowsLoopTest(int N, int isOnDisk)
     {
         this.N = N;
-        this.limit = limit;
+        this.isOnDisk = isOnDisk;
+        this.liveVectorsNum = vectorCount + MAX_LIMIT;
     }
 
     @Before
@@ -79,20 +88,81 @@ public class ShadowedRowsLoopTest extends VectorTester
     {
         super.beforeTest();
 
-        final int liveVectorsNum = vectorCount + 3 * limit;
-
         createTable(String.format("CREATE TABLE %%s (pk int, str_val text, val vector<float, %d>, PRIMARY KEY(pk))", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
         waitForIndexQueryable();
 
+        switch (isOnDisk)
+        {
+            case 0:
+                prepareDataOnDisk();
+                break;
+            case 1:
+                prepareDataInMemtable();
+                break;
+            case 2:
+                prepareDataMixedDelsInMemory();
+                break;
+            case 3:
+                prepareDataMixedDelsInMemoryAndDisk();
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown isOnDisk value: " + isOnDisk);
+        }
+
+        this.queryVector = randomVector();
+    }
+
+    private void prepareDataMixedDelsInMemoryAndDisk()
+    {
+        prepareDataOnDisk();
+
+        // delete some, don't flush
+        for (int i = liveVectorsNum; i < liveVectorsNum + vectorCount / 2; i += 2)
+        {
+            execute("DELETE FROM %s WHERE pk = ?", i);
+        }
+    }
+
+    private void prepareDataMixedDelsInMemory()
+    {
+        // insert some, flush
+        for (int i = liveVectorsNum; i < 2 * liveVectorsNum; i++)
+        {
+            execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
+                    i, Integer.toString(i), randomVector());
+
+        }
+        flush();
+
+        // delete some, don't flush
+        for (int i = liveVectorsNum; i < liveVectorsNum + vectorCount / 2; i += 2)
+        {
+            execute("DELETE FROM %s WHERE pk = ?", i);
+        }
+    }
+
+    private void prepareDataInMemtable()
+    {
+        // insert some, delete some, don't flush
+        for (int i = liveVectorsNum; i < 2 * liveVectorsNum; i++)
+        {
+            execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
+                    i, Integer.toString(i), randomVector());
+
+            if (i % 2 == 0)
+                execute("DELETE FROM %s WHERE pk = ?", i);
+        }
+    }
+
+    private void prepareDataOnDisk()
+    {
         // insert records with pk starting at vectorCount, flush
         // these will be returned by search
-        for (int i = 0; i < liveVectorsNum; i++)
+        for (int i = liveVectorsNum; i < 2 * liveVectorsNum; i++)
         {
-            //this.queryVector = randomVector(liveVectorsNum + i + 1, dimension);
-            this.queryVector = randomVector();
             execute("INSERT INTO %s (pk, str_val, val) VALUES (?, ?, ?)",
-                    liveVectorsNum + i, Integer.toString(i), queryVector);
+                    i, Integer.toString(i), randomVector());
         }
         flush();
 
@@ -115,32 +185,56 @@ public class ShadowedRowsLoopTest extends VectorTester
             }
             flush();
         }
-
-        this.queryVector = randomVector();
     }
 
     @Test
     public void shadowedLoopTest() throws Throwable
     {
-        VectorTopKProcessor.allowSpeculativeLimits = false;
+        // to speed up test/reduce time on data preparation
+        for (int limit: new int[]{ 1, 2, 5, 20, 50, MAX_LIMIT })
+        {
+            shadowedLoopTest(limit);
+        }
+    }
+
+    public void shadowedLoopTest(int limit) throws Throwable
+    {
+        QueryController.allowSpeculativeLimits = false;
         search(queryVector, limit);
         Metrics resultNoSp = getMetrics();
         assertThat(resultNoSp.loops).isGreaterThan(0);
 
         resetMetrics();
 
-        VectorTopKProcessor.allowSpeculativeLimits = true;
+        QueryController.allowSpeculativeLimits = true;
         search(queryVector, limit);
         Metrics result = getMetrics();
         assertThat(result.loops).isGreaterThan(0);
 
-        logger.info("N: {}, limit: {}; Got loops {} -> {}, keys {} -> {}",
-                    N, limit, resultNoSp.loops, result.loops, resultNoSp.keys, result.keys);
+        logger.info("OnDisk: {} N: {}, limit: {}; Got loops {} -> {}",
+                    toPrintable(isOnDisk), N, limit, resultNoSp.loops, result.loops);
 
         if (resultNoSp.loops > 3)
             assertThat(result.loops).isLessThan(resultNoSp.loops);
         else
             assertThat(result.loops).isLessThanOrEqualTo(resultNoSp.loops);
+    }
+
+    private String toPrintable(int isOnDisk)
+    {
+        switch (isOnDisk)
+        {
+            case 0:
+                return "OnDisk    ";
+            case 1:
+                return "InMemtable";
+            case 2:
+                return "DelsInMem ";
+            case 3:
+                return "DelsInAny ";
+            default:
+                return "UNKNOWN";
+        }
     }
 
     private Metrics getMetrics() throws InterruptedException

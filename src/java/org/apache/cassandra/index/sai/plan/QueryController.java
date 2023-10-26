@@ -84,6 +84,8 @@ public class QueryController
 {
     private static final Logger logger = LoggerFactory.getLogger(QueryController.class);
 
+    // for testing
+    public static boolean allowSpeculativeLimits = true;
     public static final int ORDER_CHUNK_SIZE = SAI_VECTOR_SEARCH_ORDER_CHUNK_SIZE.getInt();
 
     private final ColumnFamilyStore cfs;
@@ -236,7 +238,7 @@ public class QueryController
             for (Map.Entry<Expression, NavigableSet<SSTableIndex>> e : view)
             {
                 @SuppressWarnings("resource") // RangeIterators are closed by releaseIndexes
-                RangeIterator index = TermIterator.build(e.getKey(), e.getValue(), mergeRange, queryContext, defer, getLimit());
+                RangeIterator index = TermIterator.build(e.getKey(), e.getValue(), mergeRange, queryContext, defer, currentSoftLimitEstimate());
 
                 builder.add(index);
             }
@@ -258,7 +260,7 @@ public class QueryController
         var planExpression = new Expression(getContext(expression))
                              .add(Operator.ANN, expression.getIndexValue().duplicate());
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, getLimit());
+        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, currentSoftLimitEstimate());
 
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
@@ -296,7 +298,7 @@ public class QueryController
         planExpression.add(Operator.ANN, expression.getIndexValue().duplicate());
 
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, getLimit());
+        RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, currentSoftLimitEstimate());
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 
         try
@@ -326,7 +328,7 @@ public class QueryController
 
         try
         {
-            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, getLimit());
+            return annIndexExpression.index.limitToTopResults(queryContext, keys, annIndexExpression.expression, currentSoftLimitEstimate());
         }
         catch (IOException e)
         {
@@ -345,7 +347,7 @@ public class QueryController
                                     {
                                         try
                                         {
-                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, getLimit());
+                                            return ie.index.search(ie.expression, mergeRange, queryContext, defer, currentSoftLimitEstimate());
                                         }
                                         catch (Throwable ex)
                                         {
@@ -361,6 +363,28 @@ public class QueryController
     private int getLimit()
     {
         return command.limits().count();
+    }
+
+    /**
+     * Estimate suggestion for the limit to search extra rows in case if some rows were shadowed.
+     * @return
+     */
+    public int currentSoftLimitEstimate()
+    {
+        var K = getLimit();
+        if (!allowSpeculativeLimits)
+            return K;
+
+        int M = queryContext.getShadowedPrimaryKeys().size();
+        if (M == 0)
+            return K;
+
+        // K+2*M is enough for larger K (> 20)
+        // and does not create too much overhead for small K
+        int limit = K + 2 * M;
+        if (logger.isDebugEnabled())
+            logger.debug("Soft limit estimate: {} with K={} M={}", limit, K, M);
+        return limit;
     }
 
     public IndexFeatureSet indexFeatureSet()

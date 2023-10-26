@@ -44,7 +44,6 @@ import org.apache.cassandra.db.rows.Unfiltered;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.index.sai.IndexContext;
-import org.apache.cassandra.index.sai.QueryContext;
 import org.apache.cassandra.index.sai.StorageAttachedIndex;
 import org.apache.cassandra.index.sai.utils.InMemoryPartitionIterator;
 import org.apache.cassandra.index.sai.utils.InMemoryUnfilteredPartitionIterator;
@@ -70,19 +69,15 @@ import org.apache.cassandra.utils.Pair;
  */
 public class VectorTopKProcessor
 {
-    // for testing
-    public static boolean allowSpeculativeLimits = true;
-
     private final ReadCommand command;
     private final IndexContext indexContext;
     private final float[] queryVector;
 
-    private final QueryContext queryContext;
-
     private int rowCount = 0;
-    private int softLimit = 0;
+    private final int softLimit;
+    private final int hardLimit;
 
-    public VectorTopKProcessor(ReadCommand command, QueryContext queryContext)
+    public VectorTopKProcessor(ReadCommand command, int softLimit)
     {
         this.command = command;
 
@@ -91,27 +86,13 @@ public class VectorTopKProcessor
 
         this.indexContext = annIndexAndExpression.left;
         this.queryVector = annIndexAndExpression.right;
-        this.queryContext = queryContext;
+        this.softLimit = softLimit;
+        this.hardLimit = command.limits().count();
     }
 
     public int getExactLimit()
     {
-        return command.limits().count();
-    }
-
-    public int currentSoftLimitEstimate()
-    {
-        var K = command.limits().count();
-        if (queryContext == null || !allowSpeculativeLimits)
-            return K;
-
-        var M = queryContext.getShadowedPrimaryKeys().size();
-        if (M == 0) return K;
-
-        int limit = (float)M/K > 0.95f
-                    ? 20 * K
-                    : Math.round(K/(1 - (float)M/K));
-        return limit;
+        return hardLimit;
     }
 
     /**
@@ -120,7 +101,6 @@ public class VectorTopKProcessor
      */
     public <U extends Unfiltered, R extends BaseRowIterator<U>, P extends BasePartitionIterator<R>> BasePartitionIterator<?> filter(P partitions)
     {
-        softLimit = currentSoftLimitEstimate();
         // priority queue ordered by score in ascending order. We fill the queue with at most limit + 1 rows, so that we
         // can then remove the lowest score row when exceeding limit. The capacity is limit + 1 to prevent resizing.
         PriorityQueue<Triple<PartitionInfo, Row, Float>> topK = new PriorityQueue<>(softLimit + 1, Comparator.comparing(Triple::getRight));

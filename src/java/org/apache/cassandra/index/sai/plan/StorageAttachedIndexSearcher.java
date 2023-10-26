@@ -124,15 +124,16 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             queryContext.incShadowedKeysLoopCount();
             long lastShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             ResultRetriever result = queryIndexes.get();
-            var vtkp =  new VectorTopKProcessor(command, queryContext);
+            var vtkp =  new VectorTopKProcessor(command, controller.currentSoftLimitEstimate());
             UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)vtkp.filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
+            long newShadowedKeysCount = currentShadowedKeysCount - lastShadowedKeysCount;
             // Stop if no new shadowed keys found
             // or if we already tried to search beyond the limit for more than the limit + count of new shadowed keys
-            if (lastShadowedKeysCount == currentShadowedKeysCount
-                || (vtkp.getUsedSoftLimit() == vtkp.currentSoftLimitEstimate()
-                    && vtkp.getUsedSoftLimit() >= (vtkp.getExactLimit() + currentShadowedKeysCount - lastShadowedKeysCount)))
+            if (newShadowedKeysCount == 0
+                || (vtkp.getExactLimit() < newShadowedKeysCount + vtkp.rowCount()
+                    && vtkp.getUsedSoftLimit() > vtkp.getExactLimit() + newShadowedKeysCount))
             {
                 cfs.metric.incShadowedKeys(loopsCount, currentShadowedKeysCount - startShadowedKeysCount);
                 if (loopsCount > 1)
@@ -140,7 +141,7 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
                 return topK;
             }
             loopsCount++;
-            Tracing.trace("Found {} new shadowed keys, rerunning query (loop {})", currentShadowedKeysCount - lastShadowedKeysCount, loopsCount);
+            Tracing.trace("Found {} new shadowed keys, rerunning query (loop {})", newShadowedKeysCount, loopsCount);
         }
     }
 
