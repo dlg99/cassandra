@@ -141,7 +141,6 @@ public class VectorTopKProcessor
         }
         partitions.close();
 
-        final int hardLimit = getExactLimit();
         while (topK.size() > hardLimit)
             topK.poll();
 
