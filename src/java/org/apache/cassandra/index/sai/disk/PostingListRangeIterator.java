@@ -65,6 +65,7 @@ public class PostingListRangeIterator extends RangeIterator
 
     private boolean needsSkipping = false;
     private PrimaryKey skipToToken = null;
+    private volatile boolean isClosed = false;
 
 
     /**
@@ -124,6 +125,9 @@ public class PostingListRangeIterator extends RangeIterator
     @Override
     public void close() throws IOException
     {
+        if (isClosed)
+            return;
+        isClosed = true;
         if (logger.isTraceEnabled())
         {
             final long exhaustedInMills = timeToExhaust.stop().elapsed(TimeUnit.MILLISECONDS);
