@@ -58,6 +58,7 @@ public class ShadowedRowsLoopTest extends VectorTester
     @BeforeClass
     public static void beforeClass() throws Exception
     {
+        System.setProperty("cassandra.debugrefcount", "true");
         startJMXServer();
         createMBeanServerConnection();
     }
