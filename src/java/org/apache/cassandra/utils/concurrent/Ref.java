@@ -91,7 +91,7 @@ import static org.apache.cassandra.utils.Throwables.merge;
 public final class Ref<T> implements RefCounted<T>
 {
     static final Logger logger = LoggerFactory.getLogger(Ref.class);
-    public static final boolean DEBUG_ENABLED = System.getProperty("cassandra.debugrefcount", "false").equalsIgnoreCase("true");
+    public static final boolean DEBUG_ENABLED = System.getProperty("cassandra.debugrefcount", "true").equalsIgnoreCase("true");
 
     final State state;
     final T referent;
@@ -269,9 +269,13 @@ public final class Ref<T> implements RefCounted<T>
         }
         synchronized void log(String id)
         {
+            System.err.println("Allocate trace " + id + ":\n" + print(allocateThread, allocateTrace));
             logger.error("Allocate trace {}:\n{}", id, print(allocateThread, allocateTrace));
             if (deallocateThread != null)
+            {
+                System.err.println("Deallocate trace " + id + ":\n" + print(allocateThread, deallocateTrace));
                 logger.error("Deallocate trace {}:\n{}", id, print(deallocateThread, deallocateTrace));
+            }
         }
         String print(String thread, StackTraceElement[] trace)
         {
