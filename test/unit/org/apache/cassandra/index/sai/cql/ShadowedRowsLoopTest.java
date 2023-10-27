@@ -68,7 +68,7 @@ public class ShadowedRowsLoopTest extends VectorTester
         List<Object[]> result = new ArrayList<>();
         for (int N: new int[]{ 1, 5, 13 } )
         {
-            for (int isOnDisk: new int[]{ 0, /*1,*/ 2, 3 })
+            for (int isOnDisk: new int[]{ 0, 1, 2, 3 })
             {
                 result.add(new Object[]{ N, isOnDisk });
             }
@@ -92,6 +92,7 @@ public class ShadowedRowsLoopTest extends VectorTester
         createTable(String.format("CREATE TABLE %%s (pk int, str_val text, val vector<float, %d>, PRIMARY KEY(pk))", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
         waitForIndexQueryable();
+        disableCompaction();
 
         switch (isOnDisk)
         {

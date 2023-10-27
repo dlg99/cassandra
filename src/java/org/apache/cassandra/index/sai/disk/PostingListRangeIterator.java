@@ -126,7 +126,10 @@ public class PostingListRangeIterator extends RangeIterator
     public void close() throws IOException
     {
         if (isClosed)
+        {
+            logger.warn("Attempted to close already closed PostingListRangeIterator", new IllegalStateException("Already closed PostingListRangeIterator"));
             return;
+        }
         isClosed = true;
         if (logger.isTraceEnabled())
         {
