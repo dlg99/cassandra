@@ -26,7 +26,6 @@ import java.util.stream.Collectors;
 import javax.management.JMX;
 import javax.management.ObjectName;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -92,8 +91,8 @@ public class ShadowedRowsLoopTest extends VectorTester
         createTable(String.format("CREATE TABLE %%s (pk int, str_val text, val vector<float, %d>, PRIMARY KEY(pk))", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
         waitForIndexQueryable();
-//        flush();
-//        disableCompaction();
+        flush();
+        disableCompaction();
 
         switch (isOnDisk)
         {

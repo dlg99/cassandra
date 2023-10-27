@@ -65,7 +65,6 @@ public class PostingListRangeIterator extends RangeIterator
 
     private boolean needsSkipping = false;
     private PrimaryKey skipToToken = null;
-    private volatile boolean isClosed = false;
 
 
     /**
@@ -125,12 +124,6 @@ public class PostingListRangeIterator extends RangeIterator
     @Override
     public void close() throws IOException
     {
-        if (isClosed)
-        {
-            logger.warn("Attempted to close already closed PostingListRangeIterator", new IllegalStateException("Already closed PostingListRangeIterator"));
-            return;
-        }
-        isClosed = true;
         if (logger.isTraceEnabled())
         {
             final long exhaustedInMills = timeToExhaust.stop().elapsed(TimeUnit.MILLISECONDS);
