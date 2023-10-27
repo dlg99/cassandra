@@ -83,6 +83,8 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     private final Set<StorageAttachedIndex> indices = Sets.newConcurrentHashSet();
     private final ColumnFamilyStore baseCfs;
 
+    volatile boolean unloaded = false;
+
     private final SSTableContextManager contextManager;
 
     StorageAttachedIndexGroup(ColumnFamilyStore baseCfs)
@@ -119,6 +121,7 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     @Override
     public void removeIndex(Index index)
     {
+        assert !unloaded : "Already unloaded";
         assert index instanceof StorageAttachedIndex;
         boolean removed = indices.remove(index);
         assert removed : "Cannot remove non-existing index " + index;
@@ -147,6 +150,8 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     @Override
     public void unload()
     {
+        unloaded = true;
+
         contextManager.clear();
 
         queryMetrics.release();
@@ -335,6 +340,8 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     public synchronized Set<StorageAttachedIndex> onSSTableChanged(Collection<SSTableReader> removed, Iterable<SSTableReader> added,
                                                             Set<StorageAttachedIndex> indexes, boolean validate)
     {
+        assert !unloaded : "Already unloaded";
+
         Pair<Set<SSTableContext>, Set<SSTableReader>> results = contextManager.update(removed, added, validate);
 
         if (!results.right.isEmpty())
@@ -378,6 +385,7 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
      */
     public int openIndexFiles()
     {
+        assert !unloaded : "Already unloaded";
         return contextManager.openFiles() + indices.stream().mapToInt(index -> index.getIndexContext().openPerIndexFiles()).sum();
     }
 
@@ -386,6 +394,7 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
      */
     public long diskUsage()
     {
+        assert !unloaded : "Already unloaded";
         return contextManager.diskUsage();
     }
 
@@ -444,6 +453,7 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     @VisibleForTesting
     public void unsafeReload()
     {
+        assert !unloaded : "Already unloaded";
         contextManager.clear();
         onSSTableChanged(baseCfs.getLiveSSTables(), Collections.emptySet(), indices, false);
         onSSTableChanged(Collections.emptySet(), baseCfs.getLiveSSTables(), indices, true);
@@ -455,6 +465,7 @@ public class StorageAttachedIndexGroup implements Index.Group, INotificationCons
     @VisibleForTesting
     public void reset()
     {
+        assert !unloaded : "Already unloaded";
         contextManager.clear();
         indices.forEach(index -> index.makeIndexNonQueryable());
         onSSTableChanged(baseCfs.getLiveSSTables(), Collections.emptySet(), indices, false);
