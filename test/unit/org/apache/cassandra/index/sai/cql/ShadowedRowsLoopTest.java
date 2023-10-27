@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 import javax.management.JMX;
 import javax.management.ObjectName;
 
-import org.junit.AfterClass;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -62,12 +62,6 @@ public class ShadowedRowsLoopTest extends VectorTester
         createMBeanServerConnection();
     }
 
-    @AfterClass
-    public static void afterClass() throws Exception
-    {
-        stopJMXServer();
-    }
-
     @Parameterized.Parameters
     public static Object[][] data()
     {
@@ -88,6 +82,13 @@ public class ShadowedRowsLoopTest extends VectorTester
         this.N = N;
         this.isOnDisk = isOnDisk;
         this.liveVectorsNum = vectorCount + MAX_LIMIT;
+    }
+
+    @After
+    public void afterTest() throws Throwable
+    {
+        flush();
+        super.afterTest();
     }
 
     @Before
@@ -209,22 +210,22 @@ public class ShadowedRowsLoopTest extends VectorTester
         QueryController.allowSpeculativeLimits = false;
         search(queryVector, limit);
         Metrics resultNoSp = getMetrics();
-//        assertThat(resultNoSp.loops).isGreaterThan(0);
+        assertThat(resultNoSp.loops).isGreaterThan(0);
 
         resetMetrics();
 
         QueryController.allowSpeculativeLimits = true;
         search(queryVector, limit);
         Metrics result = getMetrics();
-//        assertThat(result.loops).isGreaterThan(0);
+        assertThat(result.loops).isGreaterThan(0);
 
         logger.info("OnDisk: {} N: {}, limit: {}; Got loops {} -> {}",
                     toPrintable(isOnDisk), N, limit, resultNoSp.loops, result.loops);
 
-//        if (resultNoSp.loops > 3)
-//            assertThat(result.loops).isLessThan(resultNoSp.loops);
-//        else
-//            assertThat(result.loops).isLessThanOrEqualTo(resultNoSp.loops);
+        if (resultNoSp.loops > 3)
+            assertThat(result.loops).isLessThan(resultNoSp.loops);
+        else
+            assertThat(result.loops).isLessThanOrEqualTo(resultNoSp.loops);
     }
 
     private String toPrintable(int isOnDisk)
