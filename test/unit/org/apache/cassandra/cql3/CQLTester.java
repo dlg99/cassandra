@@ -339,6 +339,12 @@ public abstract class CQLTester
         jmxServer.start();
     }
 
+    public static void stopJMXServer() throws Exception
+    {
+        if (jmxServer != null)
+            jmxServer.stop();
+    }
+
     public static void createMBeanServerConnection() throws Exception
     {
         assert jmxServer != null : "jmxServer not started";

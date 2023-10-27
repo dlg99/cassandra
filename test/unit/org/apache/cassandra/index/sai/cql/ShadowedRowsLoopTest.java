@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 import javax.management.JMX;
 import javax.management.ObjectName;
 
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -59,6 +60,12 @@ public class ShadowedRowsLoopTest extends VectorTester
     {
         startJMXServer();
         createMBeanServerConnection();
+    }
+
+    @AfterClass
+    public static void afterClass() throws Exception
+    {
+        stopJMXServer();
     }
 
     @Parameterized.Parameters
