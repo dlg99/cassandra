@@ -133,7 +133,7 @@ public class PostingListRangeIterator extends RangeIterator
             {
                 // timeToExhaust.stop() throws on already stopped stopwatch
                 final long closedInMills = timeToExhaust.stop().elapsed(TimeUnit.MILLISECONDS);
-                logger.trace(indexContext.logMessage("PostinListRangeIterator closed after {} ms"), closedInMills);
+                logger.trace(indexContext.logMessage("PostinListRangeIterator exhausted after {} ms"), closedInMills);
             }
 
             FileUtils.closeQuietly(postingList, primaryKeyMap);
