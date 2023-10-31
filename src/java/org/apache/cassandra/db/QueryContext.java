@@ -23,8 +23,11 @@ import java.util.concurrent.atomic.LongAdder;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Snapshot;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.index.sai.utils.AbortedOperationException;
+import org.apache.cassandra.metrics.DecayingEstimatedHistogramReservoir;
 
 /**
  * Tracks state relevant to the execution of a single query, including metrics and timeout monitoring.
@@ -64,6 +67,11 @@ public class QueryContext
     private final LongAdder shadowedKeysLoopCount = new LongAdder();
     private final LongAdder shadowedPrimaryKeysCount = new LongAdder();
 
+
+    private final LongAdder diskannSearchesCount = new LongAdder();
+    private final Histogram diskannSearchesHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+    private final Histogram diskannResultsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+
     @VisibleForTesting
     public QueryContext()
     {
@@ -82,6 +90,14 @@ public class QueryContext
     }
 
     // setters
+
+    public void addDiskannSearches(long nodes, long results)
+    {
+        diskannSearchesCount.add(1);
+        diskannSearchesHistogram.update(nodes);
+        diskannResultsHistogram.update(results);
+    }
+
     public void addShadowedPrimaryKeysCount(long val)
     {
         shadowedPrimaryKeysCount.add(val);
@@ -226,7 +242,22 @@ public class QueryContext
     {
         return hnswVectorCacheHits.longValue();
     }
-    
+
+    public long diskannSearchesCount()
+    {
+        return diskannSearchesCount.longValue();
+    }
+
+    public Snapshot diskannSearchesHistogram()
+    {
+        return diskannSearchesHistogram.getSnapshot();
+    }
+
+    public Snapshot diskannResultsHistogram()
+    {
+        return diskannResultsHistogram.getSnapshot();
+    }
+
     public void checkpoint()
     {
         if (totalQueryTimeNs() >= executionQuotaNano && !DISABLE_TIMEOUT)

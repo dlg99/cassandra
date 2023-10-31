@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import com.google.common.annotations.VisibleForTesting;
 
 import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Snapshot;
 import org.apache.cassandra.db.filter.DataLimits;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.io.util.FileUtils;
@@ -219,6 +220,12 @@ public class ReadExecutionController implements AutoCloseable
                           pluralize(queryContext.sstablesHit(), "SSTable index", "es"), pluralize(queryContext.segmentsHit(), "segment", "s"),
                           pluralize(queryContext.rowsFiltered(), "row", "s"), pluralize(queryContext.partitionsRead(), "partition", "s"),
                           TimeUnit.NANOSECONDS.toMicros(queryContext.totalQueryTimeNs()));
+
+            if (queryContext.diskannSearchesCount() > 0)
+                Tracing.trace("DiskANN search executed {} times with execution stats: visited {} nodes to return {} results",
+                              queryContext.diskannSearchesCount(),
+                              printHisto(queryContext.diskannSearchesHistogram()),
+                              printHisto(queryContext.diskannResultsHistogram()));
         }
 
         if (Tracing.traceSinglePartitions())
@@ -232,9 +239,15 @@ public class ReadExecutionController implements AutoCloseable
         }
     }
 
-    private String pluralize(long count, String root, String plural)
+    private static String pluralize(long count, String root, String plural)
     {
         return count == 1 ? String.format("1 %s", root) : String.format("%d %s%s", count, root, plural);
+    }
+
+    private static String printHisto(Snapshot val)
+    {
+        return String.format("(p50=%.2f, p99=%.2f, max=%d, stdev=%.2f)",
+                             val.getMedian(), val.get99thPercentile(), val.getMax(), val.getStdDev());
     }
 
     public boolean isTrackingRepairedStatus()
