@@ -34,7 +34,8 @@ import org.agrona.collections.IntArrayList;
 import org.apache.cassandra.db.PartitionPosition;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.index.sai.IndexContext;
-import org.apache.cassandra.index.sai.QueryContext;
+import org.apache.cassandra.db.QueryContext;
+import org.apache.cassandra.index.sai.ShadowedPrimaryKeysTracker;
 import org.apache.cassandra.index.sai.disk.PostingList;
 import org.apache.cassandra.index.sai.disk.PrimaryKeyMap;
 import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
@@ -103,13 +104,14 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     }
 
     @Override
-    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, int limit) throws IOException
+    public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, ShadowedPrimaryKeysTracker shadowedTracker, boolean defer, int limit) throws IOException
     {
-        PostingList results = searchPosting(context, exp, keyRange, limit);
+        PostingList results = searchPosting(context, shadowedTracker, exp, keyRange, limit);
         return toPrimaryKeyIterator(results, context);
     }
 
-    private PostingList searchPosting(QueryContext context, Expression exp, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
+    private PostingList searchPosting(QueryContext context, ShadowedPrimaryKeysTracker shadowedTracker,
+                                      Expression exp, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
     {
         if (logger.isTraceEnabled())
             logger.trace(indexContext.logMessage("Searching on expression '{}'..."), exp);
@@ -118,7 +120,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             throw new IllegalArgumentException(indexContext.logMessage("Unsupported expression during ANN index query: " + exp));
 
         int topK = topKFor(limit);
-        BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, topK);
+        BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(shadowedTracker, keyRange, topK);
         if (bitsOrPostingList.skipANN())
             return bitsOrPostingList.postingList();
 
@@ -146,13 +148,13 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     /**
      * Return bit set if needs to search HNSW; otherwise return posting list to bypass HNSW
      */
-    private BitsOrPostingList bitsOrPostingListForKeyRange(QueryContext context, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
+    private BitsOrPostingList bitsOrPostingListForKeyRange(ShadowedPrimaryKeysTracker shadowedTracker, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
     {
         try (PrimaryKeyMap primaryKeyMap = primaryKeyMapFactory.newPerSSTablePrimaryKeyMap())
         {
             // not restricted
             if (RangeUtil.coversFullRing(keyRange))
-                return new BitsOrPostingList(context.bitsetForShadowedPrimaryKeys(metadata, primaryKeyMap, graph));
+                return new BitsOrPostingList(shadowedTracker.bitsetForShadowedPrimaryKeys(metadata, primaryKeyMap, graph));
 
             PrimaryKey firstPrimaryKey = keyFactory.createTokenOnly(keyRange.left.getToken());
 
@@ -168,7 +170,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
             // if it covers entire segment, skip bit set
             if (minSSTableRowId <= metadata.minSSTableRowId && maxSSTableRowId >= metadata.maxSSTableRowId)
-                return new BitsOrPostingList(context.bitsetForShadowedPrimaryKeys(metadata, primaryKeyMap, graph));
+                return new BitsOrPostingList(shadowedTracker.bitsetForShadowedPrimaryKeys(metadata, primaryKeyMap, graph));
 
             minSSTableRowId = Math.max(minSSTableRowId, metadata.minSSTableRowId);
             maxSSTableRowId = min(maxSSTableRowId, metadata.maxSSTableRowId);
@@ -187,7 +189,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                 IntArrayList postings = new IntArrayList(Math.toIntExact(nRows), -1);
                 for (long sstableRowId = minSSTableRowId; sstableRowId <= maxSSTableRowId; sstableRowId++)
                 {
-                    if (context.shouldInclude(sstableRowId, primaryKeyMap))
+                    if (shadowedTracker.shouldInclude(sstableRowId, primaryKeyMap))
                         postings.addInt(metadata.toSegmentRowId(sstableRowId));
                 }
                 return new BitsOrPostingList(new ArrayPostingList(postings.toIntArray()));
@@ -200,7 +202,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             {
                 for (long sstableRowId = minSSTableRowId; sstableRowId <= maxSSTableRowId; sstableRowId++)
                 {
-                    if (context.shouldInclude(sstableRowId, primaryKeyMap))
+                    if (shadowedTracker.shouldInclude(sstableRowId, primaryKeyMap))
                     {
                         int segmentRowId = metadata.toSegmentRowId(sstableRowId);
                         int ordinal = ordinalsView.getOrdinalForRowId(segmentRowId);

@@ -133,8 +133,7 @@ public class StorageAttachedIndexQueryPlan implements Index.QueryPlan
                                                 queryMetrics,
                                                 command,
                                                 filterOperation,
-                                                indexFeatureSet,
-                                                DatabaseDescriptor.getRangeRpcTimeout(TimeUnit.MILLISECONDS));
+                                                indexFeatureSet);
     }
 
     /**

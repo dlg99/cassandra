@@ -36,7 +36,6 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.guardrails.DefaultGuardrail;
-import org.apache.cassandra.guardrails.Guardrail;
 import org.apache.cassandra.guardrails.Guardrails;
 import org.apache.cassandra.guardrails.Threshold;
 import org.apache.cassandra.net.MessageFlag;
