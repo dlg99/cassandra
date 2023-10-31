@@ -172,6 +172,12 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         return Operation.buildFilter(controller);
     }
 
+    @Override
+    public void close()
+    {
+        controller.finish();
+    }
+
     private static class ResultRetriever extends AbstractIterator<UnfilteredRowIterator>
                 implements UnfilteredPartitionIterator, ParallelCommandProcessor
     {
@@ -581,7 +587,6 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         public void close()
         {
             FileUtils.closeQuietly(operation);
-            controller.finish();
         }
     }
 
