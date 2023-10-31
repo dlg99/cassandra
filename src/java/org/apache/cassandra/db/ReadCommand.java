@@ -441,11 +441,6 @@ public abstract class ReadCommand extends AbstractReadQuery
             iterator.close();
             throw e;
         }
-        finally
-        {
-            if (null != searcher)
-                searcher.close();
-        }
     }
 
     public UnfilteredPartitionIterator searchStorage(Index.Searcher searcher, ReadExecutionController executionController)

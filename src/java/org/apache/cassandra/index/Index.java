@@ -657,7 +657,7 @@ public interface Index
      * An instance performs its query according to the RowFilter.Expression it was created for (see searcherFor)
      * An Expression is a predicate of the form [column] [operator] [value].
      */
-    public interface Searcher extends AutoCloseable
+    public interface Searcher
     {
         /**
          * Returns the {@link ReadCommand} for which this searcher has been created.
@@ -683,8 +683,6 @@ public interface Index
         {
             return command().rowFilter().filter(fullResponse, command().metadata(), command().nowInSec());
         }
-
-        default void close() {}
     }
 
     /**
