@@ -200,7 +200,7 @@ public class TrieMemtableIndexTest extends SAITester
             QueryContext queryContext = new QueryContext();
             ShadowedPrimaryKeysTracker shadowedTracker = new ShadowedPrimaryKeysTracker(queryContext);
 
-            try (RangeIterator iterator = memtableIndex.search(shadowedTracker, expression, keyRange, 0))
+            try (RangeIterator iterator = memtableIndex.search(queryContext, shadowedTracker, expression, keyRange, 0))
             {
                 while (iterator.hasNext())
                 {

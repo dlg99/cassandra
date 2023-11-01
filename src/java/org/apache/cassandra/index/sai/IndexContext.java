@@ -281,7 +281,7 @@ public class IndexContext
     }
 
 
-    public RangeIterator searchMemtable(ShadowedPrimaryKeysTracker shadowedTracker, Expression e, AbstractBounds<PartitionPosition> keyRange, int limit)
+    public RangeIterator searchMemtable(QueryContext context, ShadowedPrimaryKeysTracker shadowedTracker, Expression e, AbstractBounds<PartitionPosition> keyRange, int limit)
     {
         Collection<MemtableIndex> memtables = liveMemtables.values();
 
@@ -294,7 +294,7 @@ public class IndexContext
 
         for (MemtableIndex index : memtables)
         {
-            builder.add(index.search(shadowedTracker, e, keyRange, limit));
+            builder.add(index.search(context, shadowedTracker, e, keyRange, limit));
         }
 
         return builder.build();

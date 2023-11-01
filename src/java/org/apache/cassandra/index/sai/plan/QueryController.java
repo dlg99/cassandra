@@ -277,7 +277,7 @@ public class QueryController
                              .add(Operator.ANN, expression.getIndexValue().duplicate());
         int limit = currentSoftLimitEstimate();
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
-        RangeIterator memtableResults = getContext(expression).searchMemtable(shadowedTracker, planExpression, mergeRange, limit);
+        RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, shadowedTracker, planExpression, mergeRange, limit);
 
         var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
 

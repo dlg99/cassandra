@@ -155,7 +155,7 @@ public class VectorMemtableIndex implements MemtableIndex
     }
 
     @Override
-    public RangeIterator search(ShadowedPrimaryKeysTracker shadowedTracker, Expression expr, AbstractBounds<PartitionPosition> keyRange, int limit)
+    public RangeIterator search(QueryContext context, ShadowedPrimaryKeysTracker shadowedTracker, Expression expr, AbstractBounds<PartitionPosition> keyRange, int limit)
     {
         assert expr.getOp() == Expression.Op.ANN : "Only ANN is supported for vector search, received " + expr.getOp();
 
@@ -197,7 +197,7 @@ public class VectorMemtableIndex implements MemtableIndex
                 bits = new KeyRangeFilteringBits(keyRange, shadowedTracker.bitsetForShadowedPrimaryKeys(graph));
         }
 
-        var keyQueue = graph.search(qv, limit, bits);
+        var keyQueue = graph.search(qv, limit, bits, context);
         if (keyQueue.isEmpty())
             return RangeIterator.empty();
         return new ReorderingRangeIterator(keyQueue);
@@ -229,7 +229,7 @@ public class VectorMemtableIndex implements MemtableIndex
 
         float[] qv = exp.lower.value.vector;
         var bits = new KeyFilteringBits(results);
-        var keyQueue = graph.search(qv, limit, bits);
+        var keyQueue = graph.search(qv, limit, bits, context);
         if (keyQueue.isEmpty())
             return RangeIterator.empty();
         return new ReorderingRangeIterator(keyQueue);

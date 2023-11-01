@@ -34,6 +34,50 @@ import org.apache.cassandra.metrics.DecayingEstimatedHistogramReservoir;
  */
 public class QueryContext
 {
+    static class SearchResultMetric
+    {
+        private final LongAdder searchesCount = new LongAdder();
+        private final Histogram visitsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+        private final Histogram resultsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+
+        public void addSearches(long visits, long results)
+        {
+            searchesCount.add(1);
+            visitsHistogram.update(visits);
+            resultsHistogram.update(results);
+        }
+
+        public long getSearchesCount()
+        {
+            return searchesCount.longValue();
+        }
+
+        public Snapshot getVisitsHistogram()
+        {
+            return visitsHistogram.getSnapshot();
+        }
+
+        public Snapshot getResultsHistogram()
+        {
+            return resultsHistogram.getSnapshot();
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("executed %d times, visits: %s, results: %s",
+                                 searchesCount.longValue(),
+                                 printHisto(getVisitsHistogram()),
+                                 printHisto(getResultsHistogram()));
+        }
+    }
+
+    private static String printHisto(Snapshot val)
+    {
+        return String.format("(p50=%.2f, p99=%.2f, max=%d, stdev=%.2f)",
+                             val.getMedian(), val.get99thPercentile(), val.getMax(), val.getStdDev());
+    }
+
     private static final boolean DISABLE_TIMEOUT = Boolean.getBoolean("cassandra.sai.test.disable.timeout");
 
     protected final long queryStartTimeNanos;
@@ -68,9 +112,9 @@ public class QueryContext
     private final LongAdder shadowedPrimaryKeysCount = new LongAdder();
 
 
-    private final LongAdder diskannSearchesCount = new LongAdder();
-    private final Histogram diskannSearchesHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
-    private final Histogram diskannResultsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+    private final SearchResultMetric diskannSearches = new SearchResultMetric();
+    private final SearchResultMetric diskhnswSearches = new SearchResultMetric();
+    private final SearchResultMetric heapannSearches = new SearchResultMetric();
 
     @VisibleForTesting
     public QueryContext()
@@ -93,9 +137,17 @@ public class QueryContext
 
     public void addDiskannSearches(long nodes, long results)
     {
-        diskannSearchesCount.add(1);
-        diskannSearchesHistogram.update(nodes);
-        diskannResultsHistogram.update(results);
+        diskannSearches.addSearches(nodes, results);
+    }
+
+    public void addDiskhnswSearches(long nodes, long results)
+    {
+        diskhnswSearches.addSearches(nodes, results);
+    }
+
+    public void addHeapannSearches(long nodes, long results)
+    {
+        heapannSearches.addSearches(nodes, results);
     }
 
     public void addShadowedPrimaryKeysCount(long val)
@@ -243,19 +295,19 @@ public class QueryContext
         return hnswVectorCacheHits.longValue();
     }
 
-    public long diskannSearchesCount()
+    public SearchResultMetric diskannSearches()
     {
-        return diskannSearchesCount.longValue();
+        return diskannSearches;
     }
 
-    public Snapshot diskannSearchesHistogram()
+    public SearchResultMetric heapannSearches()
     {
-        return diskannSearchesHistogram.getSnapshot();
+        return heapannSearches;
     }
 
-    public Snapshot diskannResultsHistogram()
+    public SearchResultMetric diskhnswSearches()
     {
-        return diskannResultsHistogram.getSnapshot();
+        return diskhnswSearches;
     }
 
     public void checkpoint()

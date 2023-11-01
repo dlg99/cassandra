@@ -76,7 +76,7 @@ public class TermIterator extends RangeIterator
     {
         final List<RangeIterator> tokens = new ArrayList<>(1 + perSSTableIndexes.size());;
 
-        RangeIterator memtableIterator = e.context.searchMemtable(shadowedTracker, e, keyRange, limit);
+        RangeIterator memtableIterator = e.context.searchMemtable(queryContext, shadowedTracker, e, keyRange, limit);
         if (memtableIterator != null)
             tokens.add(memtableIterator);
 
