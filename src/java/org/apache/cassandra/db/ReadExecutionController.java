@@ -23,7 +23,6 @@ import java.util.concurrent.TimeUnit;
 import com.google.common.annotations.VisibleForTesting;
 
 import com.codahale.metrics.Histogram;
-import com.codahale.metrics.Snapshot;
 import org.apache.cassandra.db.filter.DataLimits;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.io.util.FileUtils;
@@ -220,6 +219,8 @@ public class ReadExecutionController implements AutoCloseable
                           pluralize(queryContext.sstablesHit(), "SSTable index", "es"), pluralize(queryContext.segmentsHit(), "segment", "s"),
                           pluralize(queryContext.rowsFiltered(), "row", "s"), pluralize(queryContext.partitionsRead(), "partition", "s"),
                           TimeUnit.NANOSECONDS.toMicros(queryContext.totalQueryTimeNs()));
+            Tracing.trace("Index query performed {} checkpoints in {} microseconds", queryContext.numSearches(),
+                          QueryContext.printHisto(queryContext.searchLatenciesMicros()));
 
             if (queryContext.diskannSearches().getSearchesCount() > 0)
                 Tracing.trace("DiskANN search {}", queryContext.diskannSearches());
@@ -229,6 +230,7 @@ public class ReadExecutionController implements AutoCloseable
 
             if (queryContext.heapannSearches().getSearchesCount() > 0)
                 Tracing.trace("HeapANN search {}", queryContext.heapannSearches());
+
         }
 
         if (Tracing.traceSinglePartitions())

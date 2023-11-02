@@ -37,8 +37,8 @@ public class QueryContext
     static class SearchResultMetric
     {
         private final LongAdder searchesCount = new LongAdder();
-        private final Histogram visitsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
-        private final Histogram resultsHistogram = new Histogram(new DecayingEstimatedHistogramReservoir(true));
+        private final Histogram visitsHistogram = createHistogram();
+        private final Histogram resultsHistogram = createHistogram();
 
         public void addSearches(long visits, long results)
         {
@@ -72,7 +72,12 @@ public class QueryContext
         }
     }
 
-    private static String printHisto(Snapshot val)
+    private static Histogram createHistogram()
+    {
+        return new Histogram(new DecayingEstimatedHistogramReservoir(true));
+    }
+
+    public static String printHisto(Snapshot val)
     {
         return String.format("(p50=%.2f, p99=%.2f, max=%d, stdev=%.2f)",
                              val.getMedian(), val.get99thPercentile(), val.getMax(), val.getStdDev());
@@ -115,6 +120,9 @@ public class QueryContext
     private final SearchResultMetric diskannSearches = new SearchResultMetric();
     private final SearchResultMetric diskhnswSearches = new SearchResultMetric();
     private final SearchResultMetric heapannSearches = new SearchResultMetric();
+
+    private final LongAdder numSearches = new LongAdder();
+    private final Histogram searchLatenciesMicros = createHistogram();
 
     @VisibleForTesting
     public QueryContext()
@@ -312,11 +320,23 @@ public class QueryContext
 
     public void checkpoint()
     {
+        numSearches.add(1);
+        searchLatenciesMicros.update(TimeUnit.NANOSECONDS.toMicros(totalQueryTimeNs()));
         if (totalQueryTimeNs() >= executionQuotaNano && !DISABLE_TIMEOUT)
         {
             addQueryTimeouts(1);
             throw new AbortedOperationException();
         }
+    }
+
+    public long numSearches()
+    {
+        return numSearches.longValue();
+    }
+
+    public Snapshot searchLatenciesMicros()
+    {
+        return searchLatenciesMicros.getSnapshot();
     }
 
     public long shadowedKeysLoopCount()
