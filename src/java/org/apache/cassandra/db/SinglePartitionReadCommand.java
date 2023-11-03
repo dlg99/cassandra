@@ -20,7 +20,11 @@ package org.apache.cassandra.db;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Sets;
@@ -28,6 +32,7 @@ import com.google.common.collect.Sets;
 import org.apache.cassandra.cache.IRowCacheEntry;
 import org.apache.cassandra.cache.RowCacheKey;
 import org.apache.cassandra.cache.RowCacheSentinel;
+import org.apache.cassandra.concurrent.LocalAwareExecutorService;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.db.lifecycle.*;
@@ -50,13 +55,17 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.*;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.btree.BTreeSet;
+
+import static org.apache.cassandra.index.sai.plan.VectorTopKProcessor.getExecutor;
 
 /**
  * A read command that selects a (part of a) single partition.
  */
 public class SinglePartitionReadCommand extends ReadCommand implements SinglePartitionReadQuery
 {
+    private static final LocalAwareExecutorService PARALLEL_EXECUTOR = getExecutor("SStableParallelRead");
     protected static final SelectionDeserializer selectionDeserializer = new Deserializer();
 
     private final DecoratedKey partitionKey;
@@ -611,7 +620,7 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
         view.sstables.sort(SSTableReader.maxTimestampDescending);
         ClusteringIndexFilter filter = clusteringIndexFilter();
         long minTimestamp = Long.MAX_VALUE;
-        long mostRecentPartitionTombstone = Long.MIN_VALUE;
+        final AtomicLong mostRecentPartitionTombstone = new AtomicLong(Long.MIN_VALUE);
         InputCollector<UnfilteredRowIterator> inputCollector = iteratorsForPartition(view, controller);
         try
         {
@@ -631,8 +640,8 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 controller.updateMinOldestUnrepairedTombstone(partition.stats().minLocalDeletionTime);
                 inputCollector.addMemtableIterator(RTBoundValidator.validate(iter, RTBoundValidator.Stage.MEMTABLE, false));
 
-                mostRecentPartitionTombstone = Math.max(mostRecentPartitionTombstone,
-                                                        iter.partitionLevelDeletion().markedForDeleteAt());
+                mostRecentPartitionTombstone.set(Math.max(mostRecentPartitionTombstone.get(),
+                                                        iter.partitionLevelDeletion().markedForDeleteAt()));
             }
 
             /*
@@ -648,24 +657,29 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
              * elimination in one pass, and minimize the number of sstables for which we read a partition tombstone.
             */
             view.sstables.sort(SSTableReader.maxTimestampDescending);
-            int nonIntersectingSSTables = 0;
-            int includedDueToTombstones = 0;
+            AtomicInteger nonIntersectingSSTables = new AtomicInteger(0);
+            AtomicInteger includedDueToTombstones = new AtomicInteger(0);
 
             SSTableReadMetricsCollector metricsCollector = new SSTableReadMetricsCollector();
 
             if (controller.isTrackingRepairedStatus())
                 Tracing.trace("Collecting data from sstables and tracking repaired status");
 
+            List<CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>>> futures = new ArrayList<>(view.sstables.size());
+            final AtomicBoolean isInconclusive = new AtomicBoolean(false);
             for (SSTableReader sstable : view.sstables)
             {
+                if (!sstable.isRepaired())
+                    controller.updateMinOldestUnrepairedTombstone(Math.min(controller.oldestUnrepairedTombstone(), sstable.getMinLocalDeletionTime()));
+
                 // if we've already seen a partition tombstone with a timestamp greater
                 // than the most recent update to this sstable, we can skip it
                 // if we're tracking repaired status, we mark the repaired digest inconclusive
                 // as other replicas may not have seen this partition delete and so could include
                 // data from this sstable (or others) in their digests
-                if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone)
+                if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
                 {
-                    inputCollector.markInconclusive();
+                    isInconclusive.set(true);
                     break;
                 }
 
@@ -678,39 +692,98 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                     continue;
                 }
 
-                @SuppressWarnings("resource")
-                UnfilteredRowIterator iter = intersects
-                                             ? makeIterator(cfs, sstable, metricsCollector)
-                                             : makeIteratorWithSkippedNonStaticContent(cfs, sstable, metricsCollector);
-                if (!intersects)
-                {
-                    nonIntersectingSSTables++;
+                CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>> f = new CompletableFuture<>();
+                futures.add(f);
 
-                    if (!hasRequiredStatics) { // => has partition level deletions
-                        if (!iter.partitionLevelDeletion().isLive())
-                        {
-                            includedDueToTombstones++;
-                        }
-                        else
-                        {
-                            iter.close();
-                            continue;
+                PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+                    // double-check before creating the iterator
+                    if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                    {
+                        isInconclusive.set(true);
+                        f.complete(null);
+                        return;
+                    }
+
+                    final UnfilteredRowIterator iter;
+
+                    try
+                    {
+                        iter = intersects
+                               ? makeIterator(cfs, sstable, metricsCollector)
+                               : makeIteratorWithSkippedNonStaticContent(cfs, sstable, metricsCollector);
+                    }
+                    catch (Throwable t)
+                    {
+                        f.completeExceptionally(t);
+                        return;
+                    }
+
+                    if (!intersects)
+                    {
+                        nonIntersectingSSTables.incrementAndGet();
+
+                        if (!hasRequiredStatics) { // => has partition level deletions
+                            if (!iter.partitionLevelDeletion().isLive())
+                            {
+                                includedDueToTombstones.incrementAndGet();
+                            }
+                            else
+                            {
+                                iter.close();
+                                f.complete(null);
+                                return;
+                            }
                         }
                     }
-                }
 
-                if (!sstable.isRepaired())
-                    controller.updateMinOldestUnrepairedTombstone(Math.min(controller.oldestUnrepairedTombstone(), sstable.getMinLocalDeletionTime()));
+                    if (hasPartitionLevelDeletions)
+                    {
+                        while (true)
+                        {
+                            final long recentPartitionTombstone = mostRecentPartitionTombstone.get();
+                            // double-check
+                            if (sstable.getMaxTimestamp() < recentPartitionTombstone)
+                            {
+                                isInconclusive.set(true);
+                                iter.close();
+                                f.complete(null);
+                                return;
+                            }
 
-                inputCollector.addSSTableIterator(sstable, iter);
-                if (hasPartitionLevelDeletions)
-                    mostRecentPartitionTombstone = Math.max(mostRecentPartitionTombstone,
-                                                            iter.partitionLevelDeletion().markedForDeleteAt());
+                            // try update the most recent partition tombstone timestamp
+                            long newtombstone = Math.max(recentPartitionTombstone,
+                                                         iter.partitionLevelDeletion().markedForDeleteAt());
+                            if (recentPartitionTombstone == newtombstone)
+                                break;
+                            else
+                                if (mostRecentPartitionTombstone.compareAndSet(recentPartitionTombstone, newtombstone))
+                                    break;
+                        }
+                    }
+
+                    f.complete(Pair.create(sstable, iter));
+                });
             }
+
+            if (isInconclusive.get())
+                inputCollector.markInconclusive();
+
+            futures.stream()
+                     .map(CompletableFuture::join)
+                     .filter(Objects::nonNull)
+                     .forEach(pair -> {
+                         if (pair.left.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                         {
+                             logger.info("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
+                             pair.right.close();
+                         }
+                         else
+                            inputCollector.addSSTableIterator(pair.left, pair.right);
+                     });
 
             if (Tracing.traceSinglePartitions())
                 Tracing.trace("Skipped {}/{} non-slice-intersecting sstables, included {} due to tombstones",
-                               nonIntersectingSSTables, view.sstables.size(), includedDueToTombstones);
+                               nonIntersectingSSTables.get(), view.sstables.size(), includedDueToTombstones.get());
 
             if (inputCollector.isEmpty())
                 return EmptyIterators.unfilteredRow(cfs.metadata(), partitionKey(), filter.isReversed());
@@ -877,12 +950,17 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
         view.sstables.sort(SSTableReader.maxTimestampDescending);
         // read sorted sstables
         SSTableReadMetricsCollector metricsCollector = new SSTableReadMetricsCollector();
+        List<CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>>> futures = new ArrayList<>(view.sstables.size());
+        final AtomicLong mostRecentPartitionTombstone = new AtomicLong(result != null
+                                                                       ? result.partitionLevelDeletion().markedForDeleteAt()
+                                                                       : Long.MIN_VALUE);
+
         for (SSTableReader sstable : view.sstables)
         {
             // if we've already seen a partition tombstone with a timestamp greater
             // than the most recent update to this sstable, we're done, since the rest of the sstables
             // will also be older
-            if (result != null && sstable.getMaxTimestamp() < result.partitionLevelDeletion().markedForDeleteAt())
+            if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
                 break;
 
             long currentMaxTs = sstable.getMaxTimestamp();
@@ -904,37 +982,85 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 continue;
             }
 
-            try (UnfilteredRowIterator iter = StorageHook.instance.makeRowIterator(cfs,
-                                                                                   sstable,
-                                                                                   partitionKey(),
-                                                                                   intersects ? filter.getSlices(metadata()) : Slices.NONE,
-                                                                                   columnFilter(),
-                                                                                   filter.isReversed(),
-                                                                                   metricsCollector))
-            {
-                if (!hasRequiredStatics && !intersects && !iter.partitionLevelDeletion().isLive()) // => partitionLevelDelections == true
-                {
-                    result = add(UnfilteredRowIterators.noRowsIterator(iter.metadata(),
-                                                                       iter.partitionKey(),
-                                                                       Rows.EMPTY_STATIC_ROW,
-                                                                       iter.partitionLevelDeletion(),
-                                                                       filter.isReversed()),
-                                 result,
-                                 filter,
-                                 sstable.isRepaired(),
-                                 controller);
-                }
-                else
-                {
-                    if (!hasRequiredStatics && iter.isEmpty())
-                        continue;
+            CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>> f = new CompletableFuture<>();
+            futures.add(f);
 
-                    result = add(RTBoundValidator.validate(iter, RTBoundValidator.Stage.SSTABLE, false),
-                                 result,
-                                 filter,
-                                 sstable.isRepaired(),
-                                 controller);
+            final var currFilter = filter;
+            PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+                try
+                {
+                    UnfilteredRowIterator iter = StorageHook.instance.makeRowIterator(cfs,
+                                                                                      sstable,
+                                                                                      partitionKey(),
+                                                                                      intersects ? currFilter.getSlices(metadata()) : Slices.NONE,
+                                                                                      columnFilter(),
+                                                                                      currFilter.isReversed(),
+                                                                                      metricsCollector);
+                    f.complete(Pair.create(sstable, iter));
                 }
+                catch (Throwable t)
+                {
+                    f.completeExceptionally(t);
+                }
+            });
+        }
+
+        for (var future : futures)
+        {
+            var pair = future.join();
+
+            if (pair == null)
+                continue;
+
+            var sstable = pair.left;
+            var iter = pair.right;
+
+            // if we've already seen a partition tombstone with a timestamp greater
+            // than the most recent update to this sstable, we're done, since the rest of the sstables
+            // will also be older
+            if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+            {
+                logger.info("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
+                iter.close();
+                continue;
+            }
+            mostRecentPartitionTombstone.set(Math.max(mostRecentPartitionTombstone.get(),
+                                                      iter.partitionLevelDeletion().markedForDeleteAt()));
+            if (filter == null)
+            {
+                iter.close();
+                continue;
+            }
+
+            boolean intersects = intersects(sstable);
+            boolean hasRequiredStatics = hasRequiredStatics(sstable);
+
+            if (!hasRequiredStatics && !intersects && !iter.partitionLevelDeletion().isLive()) // => partitionLevelDelections == true
+            {
+                result = add(UnfilteredRowIterators.noRowsIterator(iter.metadata(),
+                                                                   iter.partitionKey(),
+                                                                   Rows.EMPTY_STATIC_ROW,
+                                                                   iter.partitionLevelDeletion(),
+                                                                   filter.isReversed()),
+                             result,
+                             filter,
+                             sstable.isRepaired(),
+                             controller);
+                iter.close();
+            }
+            else
+            {
+                if (!hasRequiredStatics && iter.isEmpty())
+                {
+                    iter.close();
+                    continue;
+                }
+                result = add(RTBoundValidator.validate(iter, RTBoundValidator.Stage.SSTABLE, false),
+                             result,
+                             filter,
+                             sstable.isRepaired(),
+                             controller);
+                iter.close();
             }
         }
 
