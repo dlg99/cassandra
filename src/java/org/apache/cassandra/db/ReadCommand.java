@@ -582,11 +582,14 @@ public abstract class ReadCommand extends AbstractReadQuery
             @Override
             public void onClose()
             {
-                recordReadLatency(metric, System.nanoTime() - startTimeNanos);
+                var readNanos = System.nanoTime() - startTimeNanos;
+                recordReadLatency(metric, readNanos);
                 metric.incLiveRows(liveRows);
                 metric.incTombstones(tombstones.get(), tombstones.checkAndTriggerWarning());
 
-                Tracing.trace("Read {} live rows and {} tombstone ones", liveRows, tombstones.get());
+                if (Tracing.isTracing())
+                    Tracing.trace("Read {} live rows and {} tombstone ones in {} micros",
+                              liveRows, tombstones.get(), TimeUnit.NANOSECONDS.toMicros(readNanos));
             }
         }
 
