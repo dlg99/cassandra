@@ -30,6 +30,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -279,7 +280,7 @@ public class QueryController
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
         RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, shadowedTracker, planExpression, mergeRange, limit);
 
-        var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
+        var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange, queryContext).build();
 
         try
         {
@@ -317,7 +318,7 @@ public class QueryController
         int limit = currentSoftLimitEstimate();
         // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
         RangeIterator memtableResults = this.getContext(expression).limitToTopResults(queryContext, sourceKeys, planExpression, limit);
-        var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
+        var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange, queryContext).build();
 
         try
         {
@@ -479,11 +480,12 @@ public class QueryController
     private Map<Expression, NavigableSet<SSTableIndex>> referenceAndGetView(Operation.OperationType op, Collection<Expression> expressions)
     {
         SortedSet<String> indexNames = new TreeSet<>();
+        List<SSTableIndex> referencedIndexes = new ArrayList<>();
         try
         {
             while (true)
             {
-                List<SSTableIndex> referencedIndexes = new ArrayList<>();
+                referencedIndexes.clear();
                 boolean failed = false;
 
                 Map<Expression, NavigableSet<SSTableIndex>> view = getView(op, expressions);
@@ -516,7 +518,26 @@ public class QueryController
         }
         finally
         {
-            Tracing.trace("Querying storage-attached indexes {}", indexNames);
+            traceGroupedIndexes(referencedIndexes, queryContext);
+        }
+    }
+
+    static void traceGroupedIndexes(Collection<SSTableIndex> referencedIndexes, QueryContext queryContext)
+    {
+        if (referencedIndexes.isEmpty())
+            return;
+
+        var groupedIndexes = referencedIndexes
+                             .stream()
+                             .collect(Collectors.groupingBy(i -> i.getIndexContext().getIndexName(), Collectors.counting()));
+        groupedIndexes.values().forEach(queryContext::addIndexesQueried);
+
+        if (Tracing.isTracing())
+        {
+            var summary = groupedIndexes.entrySet().stream()
+                                        .map(e -> String.format("%s (%s sstables)", e.getKey(), e.getValue()))
+                                        .collect(Collectors.joining(", "));;
+            Tracing.trace("Querying storage-attached indexes {}", summary);
         }
     }
 

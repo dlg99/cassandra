@@ -104,6 +104,7 @@ public class CassandraOnDiskHnsw implements JVectorLuceneOnDiskGraph, AutoClosea
         NeighborQueue queue;
         try (var vectors = vectorsSupplier.apply(context); var view = hnsw.getView(context))
         {
+            final long start = System.nanoTime();
             queue = HnswGraphSearcher.search(queryVector,
                                              topK,
                                              vectors,
@@ -113,6 +114,7 @@ public class CassandraOnDiskHnsw implements JVectorLuceneOnDiskGraph, AutoClosea
                                              LuceneCompat.bits(ordinalsMap.ignoringDeleted(acceptBits)),
                                              Integer.MAX_VALUE);
             context.addDiskhnswSearches(queue.visitedCount(), queue.size());
+            context.markDiskHnswLatencies(System.nanoTime() - start);
             return annRowIdsToPostings(queue, limit);
         }
         catch (IOException e)

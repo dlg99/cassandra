@@ -215,22 +215,28 @@ public class ReadExecutionController implements AutoCloseable
 
         if (Tracing.isTracing())
         {
+            if (queryContext.diskannSearches().getSearchesCount() > 0)
+                Tracing.trace("DiskANN search {} with search latencies {} micros",
+                              queryContext.diskannSearches(), QueryContext.printHisto(queryContext.diskAnnLatenciesMicros()));
+
+            if (queryContext.diskhnswSearches().getSearchesCount() > 0)
+                Tracing.trace("DiskHNSW search {} with search latencies {} micros",
+                              queryContext.diskhnswSearches(), QueryContext.printHisto(queryContext.diskhnswLatenciesMicros()));
+
+            if (queryContext.heapannSearches().getSearchesCount() > 0)
+                Tracing.trace("HeapANN search {} with search latencies {} micros",
+                              queryContext.heapannSearches(), QueryContext.printHisto(queryContext.heapAnnLatenciesMicros()));
+
             Tracing.trace("Index query accessed memtable indexes, {}, and {}, post-filtered {} in {}, and took {} microseconds.",
                           pluralize(queryContext.sstablesHit(), "SSTable index", "es"), pluralize(queryContext.segmentsHit(), "segment", "s"),
                           pluralize(queryContext.rowsFiltered(), "row", "s"), pluralize(queryContext.partitionsRead(), "partition", "s"),
                           TimeUnit.NANOSECONDS.toMicros(queryContext.totalQueryTimeNs()));
-            Tracing.trace("Index query performed {} checkpoints in {} microseconds", queryContext.numSearches(),
+            Tracing.trace("Queried {} storage-attached indexes with {} sstables per index.",
+                          queryContext.numIndexesQueried(),
+                          QueryContext.printHisto(queryContext.sstablesPerIndexQueried()));
+            Tracing.trace("Index query performed {} timeout checks in {} micros intervals",
+                          queryContext.numSearches(),
                           QueryContext.printHisto(queryContext.searchLatenciesMicros()));
-
-            if (queryContext.diskannSearches().getSearchesCount() > 0)
-                Tracing.trace("DiskANN search {}", queryContext.diskannSearches());
-
-            if (queryContext.diskhnswSearches().getSearchesCount() > 0)
-                Tracing.trace("DiskHNSW search {}", queryContext.diskhnswSearches());
-
-            if (queryContext.heapannSearches().getSearchesCount() > 0)
-                Tracing.trace("HeapANN search {}", queryContext.heapannSearches());
-
         }
 
         if (Tracing.traceSinglePartitions())

@@ -150,7 +150,9 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
                 return topK;
             }
             loopsCount++;
-            Tracing.trace("Found {} new shadowed keys, rerunning query (loop {})", newShadowedKeysCount, loopsCount);
+            if (Tracing.isTracing())
+                Tracing.trace("Found {} new shadowed keys, rerunning query (loop {}) with new topk = {}",
+                          newShadowedKeysCount, loopsCount, controller.currentSoftLimitEstimate());
         }
     }
 

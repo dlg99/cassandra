@@ -118,11 +118,15 @@ public class QueryContext
 
 
     private final SearchResultMetric diskannSearches = new SearchResultMetric();
+    private final Histogram diskAnnLatenciesMicros = createHistogram();
     private final SearchResultMetric diskhnswSearches = new SearchResultMetric();
+    private final Histogram diskHnswLatenciesMicros = createHistogram();
     private final SearchResultMetric heapannSearches = new SearchResultMetric();
+    private final Histogram heapAnnLatenciesMicros = createHistogram();
 
-    private final LongAdder numSearches = new LongAdder();
     private final Histogram searchLatenciesMicros = createHistogram();
+
+    private final Histogram sstablesPerIndexQueried = createHistogram();
 
     @VisibleForTesting
     public QueryContext()
@@ -142,6 +146,26 @@ public class QueryContext
     }
 
     // setters
+
+    public void markDiskHnswLatencies(long latencyNanos)
+    {
+        diskHnswLatenciesMicros.update(TimeUnit.NANOSECONDS.toMicros(latencyNanos));
+    }
+
+    public void markDiskAnnLatencies(long latencyNanos)
+    {
+        diskAnnLatenciesMicros.update(TimeUnit.NANOSECONDS.toMicros(latencyNanos));
+    }
+
+    public void markHeapAnnLatencies(long latencyNanos)
+    {
+        heapAnnLatenciesMicros.update(TimeUnit.NANOSECONDS.toMicros(latencyNanos));
+    }
+
+    public void addIndexesQueried(long sstablesPerIndex)
+    {
+        sstablesPerIndexQueried.update(sstablesPerIndex);
+    }
 
     public void addDiskannSearches(long nodes, long results)
     {
@@ -320,7 +344,6 @@ public class QueryContext
 
     public void checkpoint()
     {
-        numSearches.add(1);
         searchLatenciesMicros.update(TimeUnit.NANOSECONDS.toMicros(totalQueryTimeNs()));
         if (totalQueryTimeNs() >= executionQuotaNano && !DISABLE_TIMEOUT)
         {
@@ -331,12 +354,37 @@ public class QueryContext
 
     public long numSearches()
     {
-        return numSearches.longValue();
+        return searchLatenciesMicros.getCount();
     }
 
     public Snapshot searchLatenciesMicros()
     {
         return searchLatenciesMicros.getSnapshot();
+    }
+
+    public Snapshot diskhnswLatenciesMicros()
+    {
+        return diskHnswLatenciesMicros.getSnapshot();
+    }
+
+    public Snapshot diskAnnLatenciesMicros()
+    {
+        return diskAnnLatenciesMicros.getSnapshot();
+    }
+
+    public Snapshot heapAnnLatenciesMicros()
+    {
+        return heapAnnLatenciesMicros.getSnapshot();
+    }
+
+    public long numIndexesQueried()
+    {
+        return sstablesPerIndexQueried.getCount();
+    }
+
+    public Snapshot sstablesPerIndexQueried()
+    {
+        return sstablesPerIndexQueried.getSnapshot();
     }
 
     public long shadowedKeysLoopCount()

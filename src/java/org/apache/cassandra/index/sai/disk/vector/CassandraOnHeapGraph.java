@@ -273,9 +273,13 @@ public class CassandraOnHeapGraph<T>
         NeighborSimilarity.ExactScoreFunction scoreFunction = node2 -> {
             return similarityFunction.compare(queryVector, ((RandomAccessVectorValues<float[]>) vectorValues).vectorValue(node2));
         };
+
+        final long start = System.nanoTime();
         var result = searcher.search(scoreFunction, null, limit, bits);
 
         context.addHeapannSearches(result.getVisitedCount(), result.getNodes().length);
+        context.markHeapAnnLatencies(System.nanoTime() - start);
+
         var a = result.getNodes();
         PriorityQueue<T> keyQueue = new PriorityQueue<>();
         for (int i = 0; i < a.length; i++)

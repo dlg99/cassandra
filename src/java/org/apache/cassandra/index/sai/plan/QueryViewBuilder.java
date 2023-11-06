@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.PartitionPosition;
+import org.apache.cassandra.db.QueryContext;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.index.sai.SSTableIndex;
@@ -51,11 +52,13 @@ public class QueryViewBuilder
 {
     private final Collection<Expression> expressions;
     private final AbstractBounds<PartitionPosition> range;
+    private final QueryContext queryContext;
 
-    QueryViewBuilder(Collection<Expression> expressions, AbstractBounds<PartitionPosition> range)
+    QueryViewBuilder(Collection<Expression> expressions, AbstractBounds<PartitionPosition> range, QueryContext queryContext)
     {
         this.expressions = expressions;
         this.range = range;
+        this.queryContext = queryContext;
     }
 
     public static class QueryView
@@ -108,15 +111,7 @@ public class QueryViewBuilder
         }
         finally
         {
-            if (Tracing.isTracing())
-            {
-                var groupedIndexes = referencedIndexes.stream().collect(
-                    Collectors.groupingBy(i -> i.getIndexContext().getIndexName(), Collectors.counting()));
-                var summary = groupedIndexes.entrySet().stream()
-                                            .map(e -> String.format("%s (%s sstables)", e.getKey(), e.getValue()))
-                                            .collect(Collectors.joining(", "));
-                Tracing.trace("Querying storage-attached indexes {}", summary);
-            }
+            QueryController.traceGroupedIndexes(referencedIndexes, queryContext);
         }
     }
 

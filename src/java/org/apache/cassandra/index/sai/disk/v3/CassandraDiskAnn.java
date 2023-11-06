@@ -124,11 +124,13 @@ public class CassandraDiskAnn implements JVectorLuceneOnDiskGraph, AutoCloseable
             scoreFunction = compressedVectors.approximateScoreFunctionFor(queryVector, similarityFunction);
             reRanker = (i, map) -> similarityFunction.compare(queryVector, map.get(i));
         }
+        final long start = System.nanoTime();
         var result = searcher.search(scoreFunction,
                                      reRanker,
                                      topK,
                                      ordinalsMap.ignoringDeleted(acceptBits));
         context.addDiskannSearches(result.getVisitedCount(), result.getNodes().length);
+        context.markDiskAnnLatencies(System.nanoTime() - start);
         return annRowIdsToPostings(result, limit);
     }
 
