@@ -110,12 +110,9 @@ public class VectorTopKProcessor
      * Executor to use for parallel index reads.
      * Defined by -Dcassandra.index_read.parallele=true/false, true by default.
      *
-     * INDEX_READ uses 2 * cpus threads by default but can be overridden with -Dcassandra.index_read.parallel_thread_num=<value>
-     *
-     * @return stage to use, default INDEX_READ
+     * Uses 2 * cpus threads by default but can be overridden with -Dcassandra.index_read.parallel_thread_num=<value>
      */
-    // todo: move to some utils
-    public static LocalAwareExecutorService getExecutor(String name)
+    private static LocalAwareExecutorService getExecutor(String name)
     {
         boolean isParallel = CassandraRelevantProperties.USE_PARALLEL_INDEX_READ.getBoolean();
 
