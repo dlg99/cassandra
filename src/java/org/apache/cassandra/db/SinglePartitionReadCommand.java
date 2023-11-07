@@ -783,6 +783,7 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                          if (pair.left.getMaxTimestamp() < mostRecentPartitionTombstone.get())
                          {
                              logger.info("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
+                             inputCollector.markInconclusive();
                              pair.right.close();
                          }
                          else
