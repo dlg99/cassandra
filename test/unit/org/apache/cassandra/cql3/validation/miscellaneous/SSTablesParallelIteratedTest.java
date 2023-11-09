@@ -143,17 +143,17 @@ public class SSTablesParallelIteratedTest extends CQLTester
                 executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 1", 1, 3);
 
                 assertColumnNames(execute("SELECT * FROM %s WHERE pk = 1"), "pk", "column1", "v1", "v2", "value");
-                executeAndCheck("SELECT * FROM %s WHERE pk = 2", 2, row(2, null, 3, null, null));
-                executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 2", 2, row(3, null));
-                executeAndCheck("SELECT v2 FROM %s WHERE pk = 2", 2, row((Integer) null));
+                executeAndCheck("SELECT * FROM %s WHERE pk = 2", 2, 3, row(2, null, 3, null, null));
+                executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 2", 2, 3, row(3, null));
+                executeAndCheck("SELECT v2 FROM %s WHERE pk = 2", 2, 3, row((Integer) null));
 
                 executeAndCheck("SELECT * FROM %s WHERE pk = 3", 1, 3);
                 executeAndCheck("SELECT pk, v1 FROM %s WHERE pk = 3", 1, 3);
                 executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 3", 1, 3);
 
-                executeAndCheck("SELECT * FROM %s WHERE pk = 4", 2, row(4, null, 3, null, null));
-                executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 4", 2, row(3, null));
-                executeAndCheck("SELECT v2 FROM %s WHERE pk = 4", 2, row((Integer) null));
+                executeAndCheck("SELECT * FROM %s WHERE pk = 4", 2, 3, row(4, null, 3, null, null));
+                executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 4", 2, 3, row(3, null));
+                executeAndCheck("SELECT v2 FROM %s WHERE pk = 4", 2, 3, row((Integer) null));
             }
         }
     }
@@ -186,7 +186,7 @@ public class SSTablesParallelIteratedTest extends CQLTester
 
         executeAndCheck("SELECT * FROM %s WHERE pk = 2 AND c = 1", 2, 3, row(2, 1, 3, null));
         executeAndCheck("SELECT s, v FROM %s WHERE pk = 2 AND c = 1", 2, 3, row(3, null));
-        executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 2", 2, row(3));
+        executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 2", 2, 3, row(3));
         executeAndCheck("SELECT v FROM %s WHERE pk = 2 AND c = 1", 2, 3, row((Integer) null));
 
         executeAndCheck("SELECT * FROM %s WHERE pk = 3 AND c = 1", 1, 3);

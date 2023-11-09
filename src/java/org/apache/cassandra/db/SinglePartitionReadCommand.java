@@ -754,14 +754,6 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                             }
                         }
 
-                        if (hasPartitionLevelDeletions && checkAndSetTombstoneCheckPossibilityToSkip(sstable, mostRecentPartitionTombstone, iter))
-                        {
-                            iter.close();
-                            isInconclusive.set(true);
-                            f.complete(null);
-                            return;
-                        }
-
                         f.complete(Pair.create(sstable, iter));
                     }
                     catch (Throwable t)
@@ -779,13 +771,23 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 if (pair == null)
                     continue;
 
-                if (pair.left.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                var sstable = pair.left;
+                var iter = pair.right;
+                var recentTombstone = mostRecentPartitionTombstone.get();
+
+                if (sstable.getMaxTimestamp() < recentTombstone)
                 {
                     isInconclusive.set(true);
                     closeAndLog(futures, i);
                     break;
                 }
-                else inputCollector.addSSTableIterator(pair.left, pair.right);
+
+                inputCollector.addSSTableIterator(sstable, iter);
+                if (hasPartitionLevelDeletions(sstable))
+                {
+                    // no need for compare and set, not changed anywhere else concurrently
+                    mostRecentPartitionTombstone.set(Math.max(recentTombstone, iter.partitionLevelDeletion().markedForDeleteAt()));
+                }
             }
 
             if (isInconclusive.get())
@@ -837,29 +839,6 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
             throw ce;
         }
         return pair;
-    }
-
-    private static boolean checkAndSetTombstoneCheckPossibilityToSkip(SSTableReader sstable,
-                                                                      AtomicLong mostRecentPartitionTombstone,
-                                                                      UnfilteredRowIterator iter)
-    {
-        while (true)
-        {
-            final long recentPartitionTombstone = mostRecentPartitionTombstone.get();
-            // double-check
-            if (sstable.getMaxTimestamp() < recentPartitionTombstone)
-                return true;
-
-            // try update the most recent partition tombstone timestamp
-            long newtombstone = Math.max(recentPartitionTombstone,
-                                         iter.partitionLevelDeletion().markedForDeleteAt());
-            if (recentPartitionTombstone == newtombstone)
-                break;
-            else
-                if (mostRecentPartitionTombstone.compareAndSet(recentPartitionTombstone, newtombstone))
-                    break;
-        }
-        return false;
     }
 
     private boolean intersects(SSTableReader sstable)
