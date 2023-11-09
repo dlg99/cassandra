@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -721,77 +722,74 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 futures.add(f);
 
                 PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
-                    // double-check before creating the iterator
-                    if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
-                    {
-                        isInconclusive.set(true);
-                        f.complete(null);
-                        return;
-                    }
-
-                    final UnfilteredRowIterator iter;
-
                     try
                     {
-                        iter = intersects
-                               ? makeIterator(cfs, sstable, metricsCollector)
-                               : makeIteratorWithSkippedNonStaticContent(cfs, sstable, metricsCollector);
+                        // double-check before creating the iterator
+                        if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                        {
+                            isInconclusive.set(true);
+                            f.complete(null);
+                            return;
+                        }
+
+                        final UnfilteredRowIterator iter = intersects
+                                   ? makeIterator(cfs, sstable, metricsCollector)
+                                   : makeIteratorWithSkippedNonStaticContent(cfs, sstable, metricsCollector);
+
+                        if (!intersects)
+                        {
+                            nonIntersectingSSTables.incrementAndGet();
+
+                            if (!hasRequiredStatics) { // => has partition level deletions
+                                if (!iter.partitionLevelDeletion().isLive())
+                                {
+                                    includedDueToTombstones.incrementAndGet();
+                                }
+                                else
+                                {
+                                    iter.close();
+                                    f.complete(null);
+                                    return;
+                                }
+                            }
+                        }
+
+                        if (hasPartitionLevelDeletions && checkAndSetTombstoneCheckPossibilityToSkip(sstable, mostRecentPartitionTombstone, iter))
+                        {
+                            iter.close();
+                            isInconclusive.set(true);
+                            f.complete(null);
+                            return;
+                        }
+
+                        f.complete(Pair.create(sstable, iter));
                     }
                     catch (Throwable t)
                     {
                         f.completeExceptionally(t);
                         return;
                     }
-
-                    if (!intersects)
-                    {
-                        nonIntersectingSSTables.incrementAndGet();
-
-                        if (!hasRequiredStatics) { // => has partition level deletions
-                            if (!iter.partitionLevelDeletion().isLive())
-                            {
-                                includedDueToTombstones.incrementAndGet();
-                            }
-                            else
-                            {
-                                iter.close();
-                                f.complete(null);
-                                return;
-                            }
-                        }
-                    }
-
-                    if (hasPartitionLevelDeletions && checkAndSetTombstoneCheckPossibilityToSkip(sstable, mostRecentPartitionTombstone, iter))
-                    {
-                        iter.close();
-                        isInconclusive.set(true);
-                        f.complete(null);
-                        return;
-                    }
-
-                    f.complete(Pair.create(sstable, iter));
                 });
             }
 
-            if (isInconclusive.get())
-                inputCollector.markInconclusive();
-
             for (int i = 0; i < futures.size(); i++)
             {
-                var future = futures.get(i);
-                var pair = future.join();
+                Pair<SSTableReader, UnfilteredRowIterator> pair = getPairFromFuture(futures.get(i));
 
                 if (pair == null)
                     continue;
 
                 if (pair.left.getMaxTimestamp() < mostRecentPartitionTombstone.get())
                 {
-                    inputCollector.markInconclusive();
+                    isInconclusive.set(true);
                     closeAndLog(futures, i);
                     break;
                 }
                 else inputCollector.addSSTableIterator(pair.left, pair.right);
             }
+
+            if (isInconclusive.get())
+                inputCollector.markInconclusive();
 
             if (Tracing.traceSinglePartitions())
                 Tracing.trace("Skipped {}/{} non-slice-intersecting sstables, included {} due to tombstones",
@@ -817,6 +815,28 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
             }
             throw e;
         }
+    }
+
+    private static Pair<SSTableReader, UnfilteredRowIterator> getPairFromFuture(CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>> future)
+    {
+        Pair<SSTableReader, UnfilteredRowIterator> pair;
+
+        try
+        {
+            pair = future.join();
+        }
+        catch (CompletionException ce)
+        {
+            if (ce.getCause() != null)
+            {
+                if (ce.getCause() instanceof RuntimeException)
+                    throw (RuntimeException) ce.getCause();
+                if (ce.getCause() instanceof Error)
+                    throw (Error) ce.getCause();
+            }
+            throw ce;
+        }
+        return pair;
     }
 
     private static boolean checkAndSetTombstoneCheckPossibilityToSkip(SSTableReader sstable,
@@ -1107,8 +1127,7 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
 
         for (int i = 0; i < futures.size(); i++)
         {
-            var future = futures.get(i);
-            var pair = future.join();
+            var pair = getPairFromFuture(futures.get(i));
 
             if (pair == null)
                 continue;
