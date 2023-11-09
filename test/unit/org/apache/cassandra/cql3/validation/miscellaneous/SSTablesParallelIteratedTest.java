@@ -119,21 +119,21 @@ public class SSTablesParallelIteratedTest extends CQLTester
             execute("UPDATE %s USING TIMESTAMP 3003 SET v1 = ? WHERE pk = ?", 3, 4);
             flush();
 
-            executeAndCheck("SELECT * FROM %s WHERE pk = 1", 1);
-            executeAndCheck("SELECT pk, v1 FROM %s WHERE pk = 1", 1);
-            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 1", 1);
+            executeAndCheck("SELECT * FROM %s WHERE pk = 1", 1, 3);
+            executeAndCheck("SELECT pk, v1 FROM %s WHERE pk = 1", 1, 3);
+            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 1", 1, 3);
 
-            executeAndCheck("SELECT * FROM %s WHERE pk = 2", 2, row(2, 3, null));
-            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 2", 2, row(3, null));
-            executeAndCheck("SELECT v2 FROM %s WHERE pk = 2", 2, row((Integer) null));
+            executeAndCheck("SELECT * FROM %s WHERE pk = 2", 2, 3, row(2, 3, null));
+            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 2", 2, 3, row(3, null));
+            executeAndCheck("SELECT v2 FROM %s WHERE pk = 2", 2, 3, row((Integer) null));
 
-            executeAndCheck("SELECT * FROM %s WHERE pk = 3", 1);
-            executeAndCheck("SELECT pk, v1 FROM %s WHERE pk = 3", 1);
-            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 3", 1);
+            executeAndCheck("SELECT * FROM %s WHERE pk = 3", 1, 3);
+            executeAndCheck("SELECT pk, v1 FROM %s WHERE pk = 3", 1, 3);
+            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 3", 1, 3);
 
-            executeAndCheck("SELECT * FROM %s WHERE pk = 4", 2, row(4, 3, null));
-            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 4", 2, row(3, null));
-            executeAndCheck("SELECT v2 FROM %s WHERE pk = 4", 2, row((Integer) null));
+            executeAndCheck("SELECT * FROM %s WHERE pk = 4", 2, 3, row(4, 3, null));
+            executeAndCheck("SELECT v1, v2 FROM %s WHERE pk = 4", 2, 3, row(3, null));
+            executeAndCheck("SELECT v2 FROM %s WHERE pk = 4", 2, 3, row((Integer) null));
 
             if (compact)
             {
@@ -179,24 +179,24 @@ public class SSTablesParallelIteratedTest extends CQLTester
         execute("UPDATE %s USING TIMESTAMP 3003 SET s = ? WHERE pk = ?", 3, 4);
         flush();
 
-        executeAndCheck("SELECT * FROM %s WHERE pk = 1 AND c = 1", 1);
-        executeAndCheck("SELECT s, v FROM %s WHERE pk = 1 AND c = 1", 1);
+        executeAndCheck("SELECT * FROM %s WHERE pk = 1 AND c = 1", 1, 3);
+        executeAndCheck("SELECT s, v FROM %s WHERE pk = 1 AND c = 1", 1, 3);
         executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 1", 1, 3);
-        executeAndCheck("SELECT v FROM %s WHERE pk = 1 AND c = 1", 1);
+        executeAndCheck("SELECT v FROM %s WHERE pk = 1 AND c = 1", 1, 3);
 
-        executeAndCheck("SELECT * FROM %s WHERE pk = 2 AND c = 1", 2, row(2, 1, 3, null));
-        executeAndCheck("SELECT s, v FROM %s WHERE pk = 2 AND c = 1", 2, row(3, null));
+        executeAndCheck("SELECT * FROM %s WHERE pk = 2 AND c = 1", 2, 3, row(2, 1, 3, null));
+        executeAndCheck("SELECT s, v FROM %s WHERE pk = 2 AND c = 1", 2, 3, row(3, null));
         executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 2", 2, row(3));
-        executeAndCheck("SELECT v FROM %s WHERE pk = 2 AND c = 1", 2, row((Integer) null));
+        executeAndCheck("SELECT v FROM %s WHERE pk = 2 AND c = 1", 2, 3, row((Integer) null));
 
-        executeAndCheck("SELECT * FROM %s WHERE pk = 3 AND c = 1", 1);
-        executeAndCheck("SELECT s, v FROM %s WHERE pk = 3 AND c = 1", 1);
+        executeAndCheck("SELECT * FROM %s WHERE pk = 3 AND c = 1", 1, 3);
+        executeAndCheck("SELECT s, v FROM %s WHERE pk = 3 AND c = 1", 1, 3);
         executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 3", 1, 3);
-        executeAndCheck("SELECT v FROM %s WHERE pk = 3 AND c = 1", 1);
+        executeAndCheck("SELECT v FROM %s WHERE pk = 3 AND c = 1", 1, 3);
 
-        executeAndCheck("SELECT * FROM %s WHERE pk = 4 AND c = 1", 2);
-        executeAndCheck("SELECT s, v FROM %s WHERE pk = 4 AND c = 1", 2);
-        executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 4", 2, row(3));
-        executeAndCheck("SELECT v FROM %s WHERE pk = 4 AND c = 1", 2);
+        executeAndCheck("SELECT * FROM %s WHERE pk = 4 AND c = 1", 2, 3);
+        executeAndCheck("SELECT s, v FROM %s WHERE pk = 4 AND c = 1", 2, 3);
+        executeAndCheck("SELECT DISTINCT s FROM %s WHERE pk = 4", 2, 3, row(3));
+        executeAndCheck("SELECT v FROM %s WHERE pk = 4 AND c = 1", 2, 3);
     }
 }
