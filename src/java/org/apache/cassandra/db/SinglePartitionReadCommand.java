@@ -1215,7 +1215,7 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                .map(CompletableFuture::join)
                .filter(Objects::nonNull)
                .forEach(pair -> {
-                   logger.info("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
+                   logger.debug("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
                    pair.right.close();
                });
     }
