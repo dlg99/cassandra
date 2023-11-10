@@ -722,17 +722,19 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 futures.add(f);
 
                 PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+                    UnfilteredRowIterator iter = null;
                     try
                     {
+                        var recentTombstone = mostRecentPartitionTombstone.get();
                         // double-check before creating the iterator
-                        if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                        if (sstable.getMaxTimestamp() < recentTombstone)
                         {
                             isInconclusive.set(true);
                             f.complete(null);
                             return;
                         }
 
-                        final UnfilteredRowIterator iter = intersects
+                        iter = intersects
                                    ? makeIterator(cfs, sstable, metricsCollector)
                                    : makeIteratorWithSkippedNonStaticContent(cfs, sstable, metricsCollector);
 
@@ -754,12 +756,21 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                             }
                         }
 
-                        f.complete(Pair.create(sstable, iter));
+                        // only do this if executed sequentially
+                        if (PARALLEL_EXECUTOR == ImmediateExecutor.INSTANCE && hasPartitionLevelDeletions(sstable))
+                        {
+                            // no need for compare and set, not changed anywhere else concurrently
+                            mostRecentPartitionTombstone.set(Math.max(recentTombstone, iter.partitionLevelDeletion().markedForDeleteAt()));
+                        }
+
+                        if (!f.complete(Pair.create(sstable, iter)))
+                            iter.close();
                     }
                     catch (Throwable t)
                     {
                         f.completeExceptionally(t);
-                        return;
+                        if (iter != null)
+                            iter.close();
                     }
                 });
             }
@@ -1086,20 +1097,31 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
             futures.add(f);
 
             PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+                // double-check
+                if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
+                {
+                    f.complete(null);
+                    return;
+                }
+
+                UnfilteredRowIterator iter = null;
                 try
                 {
-                    UnfilteredRowIterator iter = StorageHook.instance.makeRowIterator(cfs,
-                                                                                      sstable,
-                                                                                      partitionKey(),
-                                                                                      intersects ? currFilter.getSlices(metadata()) : Slices.NONE,
-                                                                                      columnFilter(),
-                                                                                      currFilter.isReversed(),
-                                                                                      metricsCollector);
-                    f.complete(Pair.create(sstable, iter));
+                    iter = StorageHook.instance.makeRowIterator(cfs,
+                                                              sstable,
+                                                              partitionKey(),
+                                                              intersects ? currFilter.getSlices(metadata()) : Slices.NONE,
+                                                              columnFilter(),
+                                                              currFilter.isReversed(),
+                                                              metricsCollector);
+                    if (!f.complete(Pair.create(sstable, iter)))
+                        iter.close();
                 }
                 catch (Throwable t)
                 {
                     f.completeExceptionally(t);
+                    if (iter != null)
+                        iter.close();
                 }
             });
         }
@@ -1212,7 +1234,19 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
     {
         futures.subList(i, futures.size())
                .parallelStream()
-               .map(CompletableFuture::join)
+               .map(f -> {
+                   // no point in waiting for actual completion
+                   f.cancel(true);
+                   try
+                   {
+                       return f.get();
+                   }
+                   catch (Throwable t)
+                   {
+                       // don't care about the exception (cancelation or other)
+                       return null;
+                   }
+               })
                .filter(Objects::nonNull)
                .forEach(pair -> {
                    logger.debug("Parallel SSTable read created extra iterator for sstable {} due to partition tombstone parallel timestamp mismatch", pair.left);
