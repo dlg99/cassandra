@@ -76,7 +76,7 @@ public class V1SearchableIndex implements SearchableIndex
         this.indexContext = indexContext;
         try
         {
-            this.indexFiles = new PerIndexFiles(sstableContext.indexDescriptor, indexContext, false);
+            this.indexFiles = new PerIndexFiles(sstableContext.indexDescriptor, indexContext);
 
             ImmutableList.Builder<Segment> segmentsBuilder = ImmutableList.builder();
 

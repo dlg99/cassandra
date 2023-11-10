@@ -157,11 +157,13 @@ public class VectorMemtableIndex implements MemtableIndex
     @Override
     public RangeIterator search(QueryContext context, ShadowedPrimaryKeysTracker shadowedTracker, Expression expr, AbstractBounds<PartitionPosition> keyRange, int limit)
     {
-        assert expr.getOp() == Expression.Op.ANN : "Only ANN is supported for vector search, received " + expr.getOp();
+        assert expr.getOp() == Expression.Op.ANN || expr.getOp() == Expression.Op.BOUNDED_ANN : "Only ANN is supported for vector search, received " + expr.getOp();
 
         float[] qv = expr.lower.value.vector;
+        if (expr.getEuclideanSearchThreshold() > 0)
+            limit = 100000;
 
-        Bits bits = null;
+        Bits bits;
         if (RangeUtil.coversFullRing(keyRange))
         {
             // partition/range deletion won't trigger index update, so we have to filter shadow primary keys in memtable index
@@ -197,7 +199,7 @@ public class VectorMemtableIndex implements MemtableIndex
                 bits = new KeyRangeFilteringBits(keyRange, shadowedTracker.bitsetForShadowedPrimaryKeys(graph));
         }
 
-        var keyQueue = graph.search(qv, limit, bits, context);
+        var keyQueue = graph.search(qv, limit, expr.getEuclideanSearchThreshold(), bits, context);
         if (keyQueue.isEmpty())
             return RangeIterator.empty();
         return new ReorderingRangeIterator(keyQueue);
@@ -229,7 +231,7 @@ public class VectorMemtableIndex implements MemtableIndex
 
         float[] qv = exp.lower.value.vector;
         var bits = new KeyFilteringBits(results);
-        var keyQueue = graph.search(qv, limit, bits, context);
+        var keyQueue = graph.search(qv, limit, 0.0f, bits, context);
         if (keyQueue.isEmpty())
             return RangeIterator.empty();
         return new ReorderingRangeIterator(keyQueue);
