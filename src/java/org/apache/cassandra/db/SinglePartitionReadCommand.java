@@ -721,7 +721,7 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                 CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>> f = new CompletableFuture<>();
                 futures.add(f);
 
-                PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+                PARALLEL_EXECUTOR.execute(() -> {
                     UnfilteredRowIterator iter = null;
                     try
                     {
@@ -733,6 +733,9 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
                             f.complete(null);
                             return;
                         }
+
+                        if (f.isCancelled())
+                            return;
 
                         iter = intersects
                                    ? makeIterator(cfs, sstable, metricsCollector)
@@ -1096,13 +1099,16 @@ public class SinglePartitionReadCommand extends ReadCommand implements SinglePar
             CompletableFuture<Pair<SSTableReader, UnfilteredRowIterator>> f = new CompletableFuture<>();
             futures.add(f);
 
-            PARALLEL_EXECUTOR.maybeExecuteImmediately(() -> {
+            PARALLEL_EXECUTOR.execute(() -> {
                 // double-check
                 if (sstable.getMaxTimestamp() < mostRecentPartitionTombstone.get())
                 {
                     f.complete(null);
                     return;
                 }
+
+                if (f.isCancelled())
+                    return;
 
                 UnfilteredRowIterator iter = null;
                 try
