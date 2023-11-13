@@ -65,12 +65,6 @@ public class VectorLocalTest extends VectorTester
         randomizedTest(2048);
     }
 
-    @Test
-    public void randomizedPqCompressedTest() throws Throwable
-    {
-        randomizedTest(1280);
-    }
-
     private void randomizedTest(int dimension) throws Throwable
     {
         createTable(String.format("CREATE TABLE %%s (pk int, str_val text, val vector<float, %d>, PRIMARY KEY(pk))", dimension));
@@ -209,22 +203,22 @@ public class VectorLocalTest extends VectorTester
     @Test
     public void partitionRestrictedWidePartitionTest() throws Throwable
     {
-        partitionRestrictedWidePartitionTest(word2vec.dimension());
+        partitionRestrictedWidePartitionTest(word2vec.dimension(), 0, 1000);
     }
 
     @Test
     public void partitionRestrictedWidePartitionBqCompressedTest() throws Throwable
     {
-        partitionRestrictedWidePartitionTest(2048);
+        partitionRestrictedWidePartitionTest(2048, 0, Integer.MAX_VALUE);
     }
 
     @Test
     public void partitionRestrictedWidePartitionPqCompressedTest() throws Throwable
     {
-        partitionRestrictedWidePartitionTest(1280);
+        partitionRestrictedWidePartitionTest(word2vec.dimension(), 2000, Integer.MAX_VALUE);
     }
 
-    public void partitionRestrictedWidePartitionTest(int dimension) throws Throwable
+    public void partitionRestrictedWidePartitionTest(int dimension, int minvectorCount, int maxvectorCount) throws Throwable
     {
         createTable(String.format("CREATE TABLE %%s (pk int, ck int, val vector<float, %d>, PRIMARY KEY(pk, ck))", dimension));
         createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex'");
@@ -233,6 +227,18 @@ public class VectorLocalTest extends VectorTester
         int partitions = getRandom().nextIntBetween(20, 40);
         int vectorCountPerPartition = getRandom().nextIntBetween(50, 100);
         int vectorCount = partitions * vectorCountPerPartition;
+
+        if (vectorCount > maxvectorCount)
+        {
+            vectorCountPerPartition = maxvectorCount / partitions;
+            vectorCount = partitions * vectorCountPerPartition;
+        }
+        else if (vectorCount < minvectorCount)
+        {
+            vectorCountPerPartition = minvectorCount / partitions;
+            vectorCount = partitions * vectorCountPerPartition;
+        }
+
         List<Vector<Float>> vectors = IntStream.range(0, vectorCount).mapToObj(s -> randomVector(dimension)).collect(Collectors.toList());
 
         int i = 0;
@@ -250,7 +256,8 @@ public class VectorLocalTest extends VectorTester
         {
             int key = getRandom().nextIntBetween(1, partitions);
             var queryVector = randomVector(dimension);
-            searchWithKey(queryVector, key, vectorCountPerPartition);
+            searchWithKey(queryVector, key, vectorCountPerPartition, 1000);
+            searchWithKey(queryVector, key, 1, 1);
         }
 
         flush();
@@ -260,7 +267,8 @@ public class VectorLocalTest extends VectorTester
         {
             int key = getRandom().nextIntBetween(1, partitions);
             var queryVector = randomVector(dimension);
-            searchWithKey(queryVector, key, vectorCountPerPartition);
+            searchWithKey(queryVector, key, vectorCountPerPartition, 1000);
+            searchWithKey(queryVector, key, 1, 1);
         }
 
         // query on-disk index with non-existing key:
@@ -302,9 +310,9 @@ public class VectorLocalTest extends VectorTester
             long minToken = Math.min(token1, token2);
             long maxToken = Math.max(token1, token2);
             List<float[]> expected = vectorsByToken.entries().stream()
-                                                  .filter(e -> e.getKey() >= minToken && e.getKey() <= maxToken)
-                                                  .map(Map.Entry::getValue)
-                                                  .collect(Collectors.toList());
+                                                   .filter(e -> e.getKey() >= minToken && e.getKey() <= maxToken)
+                                                   .map(Map.Entry::getValue)
+                                                   .collect(Collectors.toList());
 
             float[] queryVector = word2vec.vector(word2vec.word(getRandom().nextIntBetween(0, vectorCount - 1)));
 
@@ -371,7 +379,8 @@ public class VectorLocalTest extends VectorTester
             for (int row = 0; row < vectorCountPerSSTable; row++)
             {
                 float[] v = word2vec.vector(word2vec.word(vectorCount++));
-                for (int j = 0; j < getRandom().nextIntBetween(1, 4); j++) {
+                for (int j = 0; j < getRandom().nextIntBetween(1, 4); j++)
+                {
                     execute("INSERT INTO %s (pk, val) VALUES (?, ?)", pk++, vector(v));
                     population.add(v);
                 }
@@ -517,7 +526,12 @@ public class VectorLocalTest extends VectorTester
 
     private void searchWithKey(Vector<Float> queryVector, int key, int expectedSize) throws Throwable
     {
-        UntypedResultSet result = execute("SELECT * FROM %s WHERE pk = ? ORDER BY val ann of ? LIMIT 1000", key, queryVector);
+        searchWithKey(queryVector, key, expectedSize, 1000);
+    }
+
+    private void searchWithKey(Vector<Float> queryVector, int key, int expectedSize, int limit) throws Throwable
+    {
+        UntypedResultSet result = execute("SELECT * FROM %s WHERE pk = ? ORDER BY val ann of ? LIMIT " + limit, key, queryVector);
 
         // VSTODO maybe we should have different methods for these cases
         if (expectedSize < 10)
@@ -530,16 +544,6 @@ public class VectorLocalTest extends VectorTester
     private String vectorString(float[] vector)
     {
         return Arrays.toString(vector);
-    }
-
-    private float[] randomVector()
-    {
-        float[] rawVector = new float[word2vec.dimension()];
-        for (int i = 0; i < word2vec.dimension(); i++)
-        {
-            rawVector[i] = getRandom().nextFloat();
-        }
-        return rawVector;
     }
 
     private void assertDescendingScore(Vector<Float> queryVector, List<float[]> resultVectors)
