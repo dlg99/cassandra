@@ -19,7 +19,9 @@ package org.apache.cassandra.index.sai.disk.v2;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.util.Comparator;
 import java.util.List;
+import java.util.PriorityQueue;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -28,6 +30,7 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.github.jbellis.jvector.graph.NodeSimilarity;
 import io.github.jbellis.jvector.pq.BinaryQuantization;
 import io.github.jbellis.jvector.util.Bits;
 import io.github.jbellis.jvector.util.SparseFixedBitSet;
@@ -45,6 +48,7 @@ import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
 import org.apache.cassandra.index.sai.disk.v2.hnsw.CassandraOnDiskHnsw;
 import org.apache.cassandra.index.sai.disk.v3.CassandraDiskAnn;
 import org.apache.cassandra.index.sai.disk.vector.JVectorLuceneOnDiskGraph;
+import org.apache.cassandra.index.sai.disk.vector.OrdinalsView;
 import org.apache.cassandra.index.sai.disk.vector.VectorMemtableIndex;
 import org.apache.cassandra.index.sai.plan.Expression;
 import org.apache.cassandra.index.sai.utils.ArrayPostingList;
@@ -55,6 +59,7 @@ import org.apache.cassandra.index.sai.utils.RangeIterator;
 import org.apache.cassandra.index.sai.utils.RangeUtil;
 import org.apache.cassandra.index.sai.utils.SegmentOrdering;
 import org.apache.cassandra.tracing.Tracing;
+import org.apache.cassandra.utils.Pair;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -121,11 +126,12 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         if (exp.getEuclideanSearchThreshold() > 0)
             limit = 100000;
         int topK = topKFor(limit);
-        BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, topK);
+        float[] queryVector = exp.lower.value.vector;
+
+        BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, queryVector, topK);
         if (bitsOrPostingList.skipANN())
             return bitsOrPostingList.postingList();
 
-        float[] queryVector = exp.lower.value.vector;
         var vectorPostings = graph.search(queryVector, topK, exp.getEuclideanSearchThreshold(), limit, bitsOrPostingList.getBits(), context);
         if (bitsOrPostingList.expectedNodesVisited >= 0)
             updateExpectedNodes(vectorPostings.getVisitedCount(), bitsOrPostingList.expectedNodesVisited);
@@ -165,7 +171,9 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     /**
      * Return bit set if needs to search HNSW; otherwise return posting list to bypass HNSW
      */
-    private BitsOrPostingList bitsOrPostingListForKeyRange(QueryContext context, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
+    private BitsOrPostingList bitsOrPostingListForKeyRange(QueryContext context,
+                                                           AbstractBounds<PartitionPosition> keyRange,
+                                                           float[] queryVector, int limit) throws IOException
     {
         try (PrimaryKeyMap primaryKeyMap = primaryKeyMapFactory.newPerSSTablePrimaryKeyMap())
         {
@@ -212,6 +220,19 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                 return new BitsOrPostingList(new ArrayPostingList(postings.toIntArray()));
             }
 
+            if (graph instanceof CassandraDiskAnn && ((CassandraDiskAnn) graph).getCompressedVectors() != null)
+            {
+                var cv = ((CassandraDiskAnn) graph).getCompressedVectors();
+                var similarityFunction = indexContext.getIndexWriterConfig().getSimilarityFunction();
+                var scoreFunction = cv.approximateScoreFunctionFor(queryVector, similarityFunction);
+
+                try (var ordinalsView = graph.getOrdinalsView())
+                {
+                    int[] postings = findApproximateMatches(context, limit, minSSTableRowId, maxSSTableRowId, primaryKeyMap, ordinalsView, scoreFunction);
+                    return new BitsOrPostingList(new ArrayPostingList(postings));
+                }
+            }
+
             // create a bitset of ordinals corresponding to the rows in the given key range
             SparseFixedBitSet bits = bitSetForSearch();
             boolean hasMatches = false;
@@ -241,6 +262,36 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
             return new BitsOrPostingList(bits, VectorMemtableIndex.expectedNodesVisited(limit, nRows, graph.size()));
         }
+    }
+
+    private int[] findApproximateMatches(QueryContext context, int limit, long minSSTableRowId, long maxSSTableRowId, PrimaryKeyMap primaryKeyMap, OrdinalsView ordinalsView, NodeSimilarity.ApproximateScoreFunction scoreFunction) throws IOException
+    {
+        PriorityQueue<Pair<Integer, Float>> pq = new PriorityQueue<>(limit + 1, Comparator.comparing(Pair::right));
+
+        int[] postings;
+        for (long sstableRowId = minSSTableRowId; sstableRowId <= maxSSTableRowId; sstableRowId++)
+        {
+            if (!context.shouldInclude(sstableRowId, primaryKeyMap))
+                continue;
+
+            int segmentRowId = metadata.toSegmentRowId(sstableRowId);
+            int ordinal = ordinalsView.getOrdinalForRowId(segmentRowId);
+            if (ordinal < 0)
+                continue;
+
+            var score = scoreFunction.similarityTo(ordinal);
+            if (pq.size() < limit || score > pq.peek().right)
+            {
+                pq.add(Pair.create(segmentRowId, score));
+                if (pq.size() > limit)
+                    pq.poll();
+            }
+        }
+
+        postings = new int[pq.size()];
+        for (int i = postings.length - 1; i >= 0; i--)
+            postings[i] = pq.poll().left;
+        return postings;
     }
 
     private long getMaxSSTableRowId(PrimaryKeyMap primaryKeyMap, PartitionPosition right)
