@@ -27,10 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Set;
-import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -479,50 +477,41 @@ public class QueryController
      */
     private Map<Expression, NavigableSet<SSTableIndex>> referenceAndGetView(Operation.OperationType op, Collection<Expression> expressions)
     {
-        SortedSet<String> indexNames = new TreeSet<>();
         List<SSTableIndex> referencedIndexes = new ArrayList<>();
-        try
+        while (true)
         {
-            while (true)
+            referencedIndexes.clear();
+            boolean failed = false;
+
+            Map<Expression, NavigableSet<SSTableIndex>> view = getView(op, expressions);
+
+            for (SSTableIndex index : view.values().stream().flatMap(Collection::stream).collect(Collectors.toList()))
             {
-                referencedIndexes.clear();
-                boolean failed = false;
-
-                Map<Expression, NavigableSet<SSTableIndex>> view = getView(op, expressions);
-
-                for (SSTableIndex index : view.values().stream().flatMap(Collection::stream).collect(Collectors.toList()))
+                if (index.reference())
                 {
-                    indexNames.add(index.getIndexContext().getIndexName());
-
-                    if (index.reference())
-                    {
-                        referencedIndexes.add(index);
-                    }
-                    else
-                    {
-                        failed = true;
-                        break;
-                    }
-                }
-
-                if (failed)
-                {
-                    // TODO: This might be a good candidate for a table/index group metric in the future...
-                    referencedIndexes.forEach(QueryController::releaseQuietly);
+                    referencedIndexes.add(index);
                 }
                 else
                 {
-                    return view;
+                    failed = true;
+                    break;
                 }
             }
-        }
-        finally
-        {
-            traceGroupedIndexes(referencedIndexes, queryContext);
+
+            if (failed)
+            {
+                // TODO: This might be a good candidate for a table/index group metric in the future...
+                referencedIndexes.forEach(QueryController::releaseQuietly);
+            }
+            else
+            {
+                updateMetricsAndTraceGroupedIndexes(referencedIndexes, queryContext);
+                return view;
+            }
         }
     }
 
-    static void traceGroupedIndexes(Collection<SSTableIndex> referencedIndexes, QueryContext queryContext)
+    static void updateMetricsAndTraceGroupedIndexes(Collection<SSTableIndex> referencedIndexes, QueryContext queryContext)
     {
         if (referencedIndexes.isEmpty())
             return;

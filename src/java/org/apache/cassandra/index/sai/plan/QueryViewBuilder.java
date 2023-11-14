@@ -20,14 +20,12 @@ package org.apache.cassandra.index.sai.plan;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
 
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.PartitionPosition;
@@ -37,7 +35,6 @@ import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.index.sai.SSTableIndex;
 import org.apache.cassandra.index.sai.view.View;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.tracing.Tracing;
 
 /**
  * Build a query specific view of the on-disk indexes for a query. This will return a
@@ -82,36 +79,32 @@ public class QueryViewBuilder
     {
         Set<SSTableIndex> referencedIndexes = new HashSet<>();
         AtomicBoolean failed = new AtomicBoolean();
-        try
+        while (true)
         {
-            while (true)
+            referencedIndexes.clear();
+            failed.set(false);
+
+            Map<SSTableReader, List<IndexExpression>> view = getQueryView(expressions);
+            view.values()
+            .stream()
+            .flatMap(expressions -> expressions.stream().map(e -> e.index))
+            .forEach(index ->
             {
-                referencedIndexes.clear();
-                failed.set(false);
-
-                Map<SSTableReader, List<IndexExpression>> view = getQueryView(expressions);
-                view.values()
-                .stream()
-                .flatMap(expressions -> expressions.stream().map(e -> e.index))
-                .forEach(index ->
-                {
-                    if (referencedIndexes.contains(index))
-                        return;
-                    if (index.reference())
-                        referencedIndexes.add(index);
-                    else
-                        failed.set(true);
-                });
-
-                if (failed.get())
-                    referencedIndexes.forEach(SSTableIndex::release);
+                if (referencedIndexes.contains(index))
+                    return;
+                if (index.reference())
+                    referencedIndexes.add(index);
                 else
-                    return new QueryView(view, referencedIndexes);
+                    failed.set(true);
+            });
+
+            if (failed.get())
+                referencedIndexes.forEach(SSTableIndex::release);
+            else
+            {
+                QueryController.updateMetricsAndTraceGroupedIndexes(referencedIndexes, queryContext);
+                return new QueryView(view, referencedIndexes);
             }
-        }
-        finally
-        {
-            QueryController.traceGroupedIndexes(referencedIndexes, queryContext);
         }
     }
 
