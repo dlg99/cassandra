@@ -33,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.github.jbellis.jvector.graph.NodeSimilarity;
+import io.github.jbellis.jvector.graph.SearchResult;
 import io.github.jbellis.jvector.pq.BinaryQuantization;
 import io.github.jbellis.jvector.util.Bits;
 import io.github.jbellis.jvector.util.SparseFixedBitSet;
@@ -171,7 +172,8 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
      */
     private BitsOrPostingList bitsOrPostingListForKeyRange(QueryContext context,
                                                            AbstractBounds<PartitionPosition> keyRange,
-                                                           float[] queryVector, int limit) throws IOException
+                                                           float[] queryVector,
+                                                           int limit) throws IOException
     {
         try (PrimaryKeyMap primaryKeyMap = primaryKeyMapFactory.newPerSSTablePrimaryKeyMap())
         {
@@ -218,9 +220,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                 final int[] postings;
                 if (graph.getCompressedVectors() == null || nRows <= limit)
                 {
-                    IntArrayList arrayList = new IntArrayList(nRows, -1);
-                    segmentRowIdsStream.forEach(arrayList::addInt);
-                    postings = arrayList.toIntArray();
+                    postings = segmentRowIdsStream.toArray();
                 }
                 else
                 {
@@ -266,26 +266,27 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
     private int[] findTopApproximatePostings(int limit, int nRows, IntStream segmentRowIdsStream, NodeSimilarity.ApproximateScoreFunction scoreFunction) throws IOException
     {
-        ArrayList<Pair<Integer, Float>> pairs = new ArrayList<>(nRows);
+        ArrayList<SearchResult.NodeScore> pairs = new ArrayList<>(nRows);
         try (var ordinalsView = graph.getOrdinalsView())
         {
             // just because getOrdinalForRowId throw IOException, to avoid wrapping it into RuntimException
-            Iterable<Integer> segmentRowIdIterator = segmentRowIdsStream::iterator;
-            for (int segmentRowId: segmentRowIdIterator)
+            var segmentRowIdIterator = segmentRowIdsStream.iterator();
+            while(segmentRowIdIterator.hasNext())
             {
+                var segmentRowId = segmentRowIdIterator.nextInt();
                 int ordinal = ordinalsView.getOrdinalForRowId(segmentRowId);
                 if (ordinal < 0)
                     continue;
 
                 var score = scoreFunction.similarityTo(ordinal);
-                pairs.add(Pair.create(segmentRowId, score));
+                pairs.add(new SearchResult.NodeScore(segmentRowId, score));
             }
         }
-        pairs.sort(Comparator.comparing(Pair::right));
+        pairs.sort(Comparator.comparing(sr -> sr.score));
         int end = Math.min(pairs.size(), limit) - 1;
         int[] postings = new int[end + 1];
         for (int i = end; i >= 0; i--)
-            postings[end - i] = pairs.get(i).left;
+            postings[end - i] = pairs.get(i).node;
         return postings;
     }
 
