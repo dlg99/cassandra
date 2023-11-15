@@ -20,7 +20,6 @@ package org.apache.cassandra.index.sai.disk.v2;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -60,7 +59,6 @@ import org.apache.cassandra.index.sai.utils.RangeIterator;
 import org.apache.cassandra.index.sai.utils.RangeUtil;
 import org.apache.cassandra.index.sai.utils.SegmentOrdering;
 import org.apache.cassandra.tracing.Tracing;
-import org.apache.cassandra.utils.Pair;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -75,7 +73,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
     private final JVectorLuceneOnDiskGraph graph;
     private final PrimaryKey.Factory keyFactory;
-    private int globalBruteForceRows; // not final so test can inject its own setting
+    final private int globalBruteForceRows; // not final so test can inject its own setting
     private final AtomicRatio actualExpectedRatio = new AtomicRatio();
     private final ThreadLocal<SparseFixedBitSet> cachedBitSets;
 
@@ -282,9 +280,11 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                 pairs.add(new SearchResult.NodeScore(segmentRowId, score));
             }
         }
-        pairs.sort(Comparator.comparing(sr -> sr.score));
+        // sort descending
+        pairs.sort((a, b) -> Float.compare(b.score, a.score));
         int end = Math.min(pairs.size(), limit) - 1;
         int[] postings = new int[end + 1];
+        // top K ascending
         for (int i = end; i >= 0; i--)
             postings[end - i] = pairs.get(i).node;
         return postings;
