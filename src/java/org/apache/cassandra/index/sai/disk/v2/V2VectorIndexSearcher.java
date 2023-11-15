@@ -73,7 +73,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
     private final JVectorLuceneOnDiskGraph graph;
     private final PrimaryKey.Factory keyFactory;
-    final private int globalBruteForceRows; // not final so test can inject its own setting
+    private int globalBruteForceRows; // not final so test can inject its own setting
     private final AtomicRatio actualExpectedRatio = new AtomicRatio();
     private final ThreadLocal<SparseFixedBitSet> cachedBitSets;
 
