@@ -145,10 +145,8 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
      */
     private int topKFor(int limit)
     {
-        // uncompressed indexes don't need to over-search
-        if (graph instanceof CassandraOnDiskHnsw)
-            return limit;
         var cv = graph.getCompressedVectors();
+        // uncompressed indexes don't need to over-search
         if (cv == null)
             return limit;
 
