@@ -29,11 +29,13 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.codahale.metrics.Histogram;
 import io.github.jbellis.jvector.graph.SearchResult;
 import io.github.jbellis.jvector.pq.BinaryQuantization;
 import io.github.jbellis.jvector.util.Bits;
 import io.github.jbellis.jvector.util.SparseFixedBitSet;
 import org.agrona.collections.IntArrayList;
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.db.PartitionPosition;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.index.sai.IndexContext;
@@ -55,6 +57,8 @@ import org.apache.cassandra.index.sai.utils.PrimaryKey;
 import org.apache.cassandra.index.sai.utils.RangeIterator;
 import org.apache.cassandra.index.sai.utils.RangeUtil;
 import org.apache.cassandra.index.sai.utils.SegmentOrdering;
+import org.apache.cassandra.metrics.ClearableHistogram;
+import org.apache.cassandra.metrics.DecayingEstimatedHistogramReservoir;
 import org.apache.cassandra.tracing.Tracing;
 
 import static java.lang.Math.max;
@@ -72,7 +76,11 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     private final PrimaryKey.Factory keyFactory;
     private int globalBruteForceRows; // not final so test can inject its own setting
     private final AtomicRatio actualExpectedRatio = new AtomicRatio();
+    private final Histogram bruteForceRowsHistogram = new ClearableHistogram(new DecayingEstimatedHistogramReservoir(false));
+    private final Histogram graphSearchRowsHistogram = new ClearableHistogram(new DecayingEstimatedHistogramReservoir(false));
     private final ThreadLocal<SparseFixedBitSet> cachedBitSets;
+
+    private final boolean useStatsForBruteForce = CassandraRelevantProperties.VECTOR_INDEX_SEARCHER_TRACK_STATS_FOR_BRUTE_FORCE.getBoolean();
 
     public V2VectorIndexSearcher(PrimaryKeyMap.Factory primaryKeyMapFactory,
                                  PerIndexFiles perIndexFiles,
@@ -124,13 +132,24 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         int topK = topKFor(limit);
         float[] queryVector = exp.lower.value.vector;
 
+        long startNanos = System.nanoTime();
+
         BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, queryVector, topK);
         if (bitsOrPostingList.skipANN())
+        {
+            if (bitsOrPostingList.getNumScannedRows() > 0)
+            {
+                long elapsedNanosPerRow = (System.nanoTime() - startNanos) / bitsOrPostingList.getNumScannedRows();
+                bruteForceRowsHistogram.update(elapsedNanosPerRow);
+            }
             return bitsOrPostingList.postingList();
+        }
 
         var vectorPostings = graph.search(queryVector, topK, exp.getEuclideanSearchThreshold(), limit, bitsOrPostingList.getBits(), context);
         if (bitsOrPostingList.rawExpectedNodes >= 0)
             updateExpectedNodes(vectorPostings.getVisitedCount(), bitsOrPostingList.rawExpectedNodes);
+        long elapsedNanosPerRow = (System.nanoTime() - startNanos) / vectorPostings.getVisitedCount();
+        graphSearchRowsHistogram.update(elapsedNanosPerRow);
         return vectorPostings;
     }
 
@@ -182,11 +201,11 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             long minSSTableRowId = primaryKeyMap.nextAfter(firstPrimaryKey);
             // If we didn't find the first key, we won't find the last primary key either
             if (minSSTableRowId < 0)
-                return new BitsOrPostingList(PostingList.EMPTY);
+                return new BitsOrPostingList(PostingList.EMPTY, 0);
             long maxSSTableRowId = getMaxSSTableRowId(primaryKeyMap, keyRange.right);
 
             if (minSSTableRowId > maxSSTableRowId)
-                return new BitsOrPostingList(PostingList.EMPTY);
+                return new BitsOrPostingList(PostingList.EMPTY, 0);
 
             // if it covers entire segment, skip bit set
             if (minSSTableRowId <= metadata.minSSTableRowId && maxSSTableRowId >= metadata.maxSSTableRowId)
@@ -198,7 +217,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             // If num of matches are not bigger than topK, skip ANN.
             // (nRows should not include shadowed rows, but context doesn't break those out by segment,
             // so we will live with the inaccuracy.)
-            int nRows = Math.toIntExact(maxSSTableRowId - minSSTableRowId + 1);
+            final int nRows = Math.toIntExact(maxSSTableRowId - minSSTableRowId + 1);
             int maxBruteForceRows = min(globalBruteForceRows, maxBruteForceRows(topK, nRows));
             logAndTrace("Search range covers {} rows; max brute force rows is {} for sstable index with {} nodes, LIMIT {}",
                         nRows, maxBruteForceRows, graph.size(), topK);
@@ -212,7 +231,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
                         segmentRowIds.add(metadata.toSegmentRowId(i));
                 }
                 var postings = findTopApproximatePostings(queryVector, segmentRowIds, topK);
-                return new BitsOrPostingList(new ArrayPostingList(postings));
+                return new BitsOrPostingList(new ArrayPostingList(postings), nRows);
             }
 
             // create a bitset of ordinals corresponding to the rows in the given key range
@@ -240,7 +259,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             }
 
             if (!hasMatches)
-                return new BitsOrPostingList(PostingList.EMPTY);
+                return new BitsOrPostingList(PostingList.EMPTY, nRows);
 
             return new BitsOrPostingList(bits, getRawExpectedNodes(topK, nRows));
         }
@@ -296,6 +315,25 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     private int maxBruteForceRows(int limit, int nPermittedOrdinals)
     {
         int expectedNodes = expectedNodesVisited(limit, nPermittedOrdinals);
+
+        // enough stats to guesstimate cost of brute force vs graph search
+        if (useStatsForBruteForce && bruteForceRowsHistogram.getCount() > 10 && graphSearchRowsHistogram.getCount() > 10)
+        {
+            var bruteForceCost = bruteForceRowsHistogram.getSnapshot().getMean() * nPermittedOrdinals;
+            var graphSearchCost = graphSearchRowsHistogram.getSnapshot().getMean() * expectedNodes;
+
+            if (logger.isDebugEnabled())
+                logger.debug("Estimated brute force cost: {} ns, graph search cost: {} ns, picking {}",
+                             bruteForceCost,
+                             graphSearchCost,
+                             bruteForceCost < graphSearchCost ? "brute force" : "graph search");
+
+            // brute force search is cheaper
+            if (bruteForceCost < graphSearchCost)
+                return nPermittedOrdinals;
+
+            return 0;
+        }
         // ANN index will do a bunch of extra work besides the full comparisons (performing PQ similarity for each edge);
         // brute force from sstable will also do a bunch of extra work (going through trie index to look up row).
         // VSTODO I'm not sure which one is more expensive (and it depends on things like sstable chunk cache hit ratio)
@@ -387,17 +425,25 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             return RangeIterator.empty();
         }
 
+        long startNanos = System.nanoTime();
         if (numRows <= maxBruteForceRows)
         {
             // brute force using the in-memory compressed vectors to cut down the number of results returned
             var queryVector = exp.lower.value.vector;
             var postings = findTopApproximatePostings(queryVector, rowIds, topK);
+            long elapsedNanosPerRow = (System.nanoTime() - startNanos) / numRows;
+            bruteForceRowsHistogram.update(elapsedNanosPerRow);
             return toPrimaryKeyIterator(new ArrayPostingList(postings), context);
         }
         // else ask the index to perform a search limited to the bits we created
         float[] queryVector = exp.lower.value.vector;
         var results = graph.search(queryVector, topK, limit, bits, context);
         updateExpectedNodes(results.getVisitedCount(), getRawExpectedNodes(topK, numRows));
+        if (results.getVisitedCount() > 0)
+        {
+            long elapsedNanosPerRow = (System.nanoTime() - startNanos) / results.getVisitedCount();
+            graphSearchRowsHistogram.update(elapsedNanosPerRow);
+        }
         return toPrimaryKeyIterator(results, context);
     }
 
@@ -431,12 +477,14 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         private final Bits bits;
         private final int rawExpectedNodes;
         private final PostingList postingList;
+        private final int rowsScanned;
 
         public BitsOrPostingList(Bits bits, int rawExpectedNodes)
         {
             this.bits = bits;
             this.rawExpectedNodes = rawExpectedNodes;
             this.postingList = null;
+            this.rowsScanned = -1;
         }
 
         public BitsOrPostingList(Bits bits)
@@ -444,13 +492,15 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             this.bits = bits;
             this.postingList = null;
             this.rawExpectedNodes = -1;
+            this.rowsScanned = -1;
         }
 
-        public BitsOrPostingList(PostingList postingList)
+        public BitsOrPostingList(PostingList postingList, int rowsScanned)
         {
             this.bits = null;
             this.postingList = Preconditions.checkNotNull(postingList);
             this.rawExpectedNodes = -1;
+            this.rowsScanned = rowsScanned;
         }
 
         @Nullable
@@ -464,6 +514,12 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         {
             Preconditions.checkState(skipANN());
             return postingList;
+        }
+
+        public int getNumScannedRows()
+        {
+            Preconditions.checkState(skipANN());
+            return rowsScanned;
         }
 
         public boolean skipANN()

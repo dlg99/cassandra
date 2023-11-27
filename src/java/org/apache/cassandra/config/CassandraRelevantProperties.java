@@ -407,7 +407,9 @@ public enum CassandraRelevantProperties
 
     // Enables parallel index read.
     USE_PARALLEL_INDEX_READ("cassandra.index_read.parallel", "true"),
-    PARALLEL_INDEX_READ_NUM_THREADS("cassandra.index_read.parallel_thread_num");
+    PARALLEL_INDEX_READ_NUM_THREADS("cassandra.index_read.parallel_thread_num"),
+
+    VECTOR_INDEX_SEARCHER_TRACK_STATS_FOR_BRUTE_FORCE("cassandra.vector_index_searcher.track_stats_for_brute_force", "true");
 
     CassandraRelevantProperties(String key, String defaultVal)
     {
