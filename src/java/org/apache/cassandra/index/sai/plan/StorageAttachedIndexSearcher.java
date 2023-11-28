@@ -273,9 +273,6 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
                 if (operation == null)
                     break;
 
-                if (lastKey == null)
-                    operation.skipTo(firstPrimaryKey);
-
                 skipToNextPartition();
 
                 PrimaryKey key = nextSelectedKeyInRange();

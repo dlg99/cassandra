@@ -78,10 +78,9 @@ public class OrderingFilterRangeIterator extends RangeIterator
     @Override
     protected void performSkipTo(PrimaryKey nextToken)
     {
-        if (nextIterator == null)
-            tryToComputeNext();
-
         input.skipTo(nextToken);
+        // VSTODO is it valid to skipTo() on this iterator? It seems like it could result in missing a relevant
+        // local maxima, though I'm not sure that this method is called when nextIterator != null.
         if (nextIterator != null)
             nextIterator.skipTo(nextToken);
     }
