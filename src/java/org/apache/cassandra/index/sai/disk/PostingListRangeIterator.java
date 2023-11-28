@@ -90,11 +90,13 @@ public class PostingListRangeIterator extends RangeIterator
     @Override
     protected void performSkipTo(PrimaryKey nextKey)
     {
-        // We use strictCompareTo here because the first call to this method is often the lower bound of the query
-        // which is just a PrimaryKey with a token. Regular skipTo considers keys with matching tokens to be equal
-        // if one of the keys is missing partition key information. That can lead to early termination of the
-        // skipTo logic, which is problematic in the RangeIntersectionIterator.
-        if (skipToToken != null && skipToToken.strictCompareTo(nextKey) >= 0)
+        // We defer the actual skipping logic until the next call to computeNext() because skipping requires reading
+        // from disk in order to get the row id at or after the nextKey. As such, we use compareComparableBytes, which
+        // implements a comparison that is equivalent to comparing PrimaryKey byteComparable representations.
+        // This is necessary to prevent issues that can occur if skipToToken is already set to a token-only PrimaryKey
+        // and the nextKey is a PrimaryKey with partition key information because the compareTo method would consider
+        // these two keys equal.
+        if (skipToToken != null && skipToToken.compareComparableBytes(nextKey) >= 0)
             return;
 
         skipToToken = nextKey;

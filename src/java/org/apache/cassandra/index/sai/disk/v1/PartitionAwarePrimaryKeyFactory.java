@@ -145,7 +145,7 @@ public class PartitionAwarePrimaryKeyFactory implements PrimaryKey.Factory
         }
 
         @Override
-        public int strictCompareTo(PrimaryKey o)
+        public int compareComparableBytes(PrimaryKey o)
         {
             int cmp = token().compareTo(o.token());
             if (cmp != 0)

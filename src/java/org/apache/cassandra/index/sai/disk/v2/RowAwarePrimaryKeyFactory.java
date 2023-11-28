@@ -183,8 +183,13 @@ public class RowAwarePrimaryKeyFactory implements PrimaryKey.Factory
         }
 
         @Override
-        public int strictCompareTo(PrimaryKey o)
+        public int compareComparableBytes(PrimaryKey o)
         {
+            // Implementation note:
+            // We do not actually need to create the ByteSource object to get the correct byte comparison result.
+            // It is sufficient to compare the token, then the partition key, then the clustering columns with the
+            // detail that a null value is less than a non-null value. The compareTo implementation considers
+            // a null value and a non-null value to be equal.
             int cmp = token().compareTo(o.token());
 
             // If the tokens don't match then we don't need to compare any more of the key.

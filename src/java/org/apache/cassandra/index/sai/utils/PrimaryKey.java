@@ -180,13 +180,10 @@ public interface PrimaryKey extends Comparable<PrimaryKey>
     ByteSource asComparableBytesMaxPrefix(ByteComparable.Version version);
 
     /**
-     * A variation of the {@link #compareTo} method that considers a more fully qualified {@link PrimaryKey} to
-     * be greater than a less fully qualified {@link PrimaryKey}. In essence, this method should return results
-     * consistent with comparing the {@link #asComparableBytes} representations of the {@link PrimaryKey}, however,
-     * because creating the {@link ByteSource} representations can be expensive, this method should be used when
-     * the {@link ByteSource} is not required.
-     * @param other
-     * @return
+     * A variation of the {@link #compareTo} method that returns the result of comparing the
+     * {@link #asComparableBytes(ByteComparable.Version)}.
+     * @param other the {@link PrimaryKey} to compare to
+     * @return the result of comparing the {@link #asComparableBytes(ByteComparable.Version)} of each key
      */
-    int strictCompareTo(PrimaryKey other);
+    int compareComparableBytes(PrimaryKey other);
 }
