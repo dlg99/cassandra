@@ -42,12 +42,12 @@ public class SlidingWindowReservoirWithQuickMean implements Reservoir
             return this.measurements.length;
         synchronized (this)
         {
-            return (int) Math.min(this.count, (long)this.measurements.length);
+            return (int) Math.min(this.count, this.measurements.length);
         }
     }
 
     public synchronized void update(long value) {
-        this.measurements[(int)(this.count++ % (long)this.measurements.length)] = value;
+        this.measurements[(int)(this.count++ % this.measurements.length)] = value;
     }
 
     public double getMean()
@@ -60,10 +60,10 @@ public class SlidingWindowReservoirWithQuickMean implements Reservoir
         double sum = 0.0;
         synchronized(this) {
             for(int i = 0; i < sz; ++i) {
-                sum += (double)this.measurements[i];
+                sum += this.measurements[i];
             }
         }
-        return sum / (double)sz;
+        return sum / sz;
     }
 
     public Snapshot getSnapshot()

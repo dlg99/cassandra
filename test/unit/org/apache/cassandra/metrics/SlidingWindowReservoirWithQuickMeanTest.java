@@ -18,11 +18,13 @@
 
 package org.apache.cassandra.metrics;
 
-import junit.framework.TestCase;
+import org.junit.Test;
 
-public class SlidingWindowReservoirWithQuickMeanTest extends TestCase
+import static org.junit.Assert.assertEquals;
+
+public class SlidingWindowReservoirWithQuickMeanTest
 {
-
+    @Test
     public void testSize()
     {
         var sr = new SlidingWindowReservoirWithQuickMean(10);
@@ -35,6 +37,7 @@ public class SlidingWindowReservoirWithQuickMeanTest extends TestCase
         }
     }
 
+    @Test
     public void testGetMean()
     {
         var sr = new SlidingWindowReservoirWithQuickMean(10);
@@ -52,6 +55,7 @@ public class SlidingWindowReservoirWithQuickMeanTest extends TestCase
         assertEquals(10.0d, sr.getMean(), 0.01d);
     }
 
+    @Test
     public void testGetSnapshot()
     {
         var sr = new SlidingWindowReservoirWithQuickMean(10);

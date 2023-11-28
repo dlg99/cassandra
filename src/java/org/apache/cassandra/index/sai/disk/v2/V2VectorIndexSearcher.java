@@ -22,6 +22,8 @@ import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.LongStream;
 import javax.annotation.Nullable;
 
 import com.google.common.base.MoreObjects;
@@ -47,6 +49,7 @@ import org.apache.cassandra.index.sai.disk.v1.PerIndexFiles;
 import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
 import org.apache.cassandra.index.sai.disk.v2.hnsw.CassandraOnDiskHnsw;
 import org.apache.cassandra.index.sai.disk.vector.JVectorLuceneOnDiskGraph;
+import org.apache.cassandra.index.sai.disk.vector.OrdinalsView;
 import org.apache.cassandra.index.sai.disk.vector.VectorMemtableIndex;
 import org.apache.cassandra.index.sai.plan.Expression;
 import org.apache.cassandra.index.sai.utils.ArrayPostingList;
@@ -219,47 +222,58 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             boolean useBruteForce = recommendBruteForce(topK, nRows);
             logAndTrace("Search range covers {} rows; will{}use brute force for sstable index with {} nodes, LIMIT {}",
                         nRows, useBruteForce ? " " : " not ", graph.size(), topK);
+
+            var sstableRowIdStream = LongStream.range(minSSTableRowId, maxSSTableRowId + 1)
+                                       .filter(sstableRowId -> context.shouldInclude(sstableRowId, primaryKeyMap));
             // if we have a small number of results then let TopK processor do exact NN computation
             if (useBruteForce)
             {
                 var segmentRowIds = new IntArrayList(nRows, 0);
-                for (long i = minSSTableRowId; i <= maxSSTableRowId; i++)
-                {
-                    if (context.shouldInclude(i, primaryKeyMap))
-                        segmentRowIds.add(metadata.toSegmentRowId(i));
-                }
+                sstableRowIdStream.forEach(sstableRowId -> segmentRowIds.add(metadata.toSegmentRowId(sstableRowId)));
                 var postings = findTopApproximatePostings(queryVector, segmentRowIds, topK);
                 return new BitsOrPostingList(new ArrayPostingList(postings), nRows);
             }
 
             // create a bitset of ordinals corresponding to the rows in the given key range
             SparseFixedBitSet bits = bitSetForSearch();
-            boolean hasMatches = false;
+            AtomicBoolean hasMatches = new AtomicBoolean(false);
             try (var ordinalsView = graph.getOrdinalsView())
             {
-                for (long sstableRowId = minSSTableRowId; sstableRowId <= maxSSTableRowId; sstableRowId++)
-                {
-                    if (context.shouldInclude(sstableRowId, primaryKeyMap))
-                    {
-                        int segmentRowId = metadata.toSegmentRowId(sstableRowId);
-                        int ordinal = ordinalsView.getOrdinalForRowId(segmentRowId);
-                        if (ordinal >= 0)
-                        {
-                            bits.set(ordinal);
-                            hasMatches = true;
-                        }
-                    }
-                }
+                sstableRowIdStream.forEach(sstableRowId ->
+                   {
+                       int segmentRowId = metadata.toSegmentRowId(sstableRowId);
+                       int ordinal = getOrdinal(ordinalsView, segmentRowId);
+                       if (ordinal >= 0)
+                       {
+                           bits.set(ordinal);
+                           hasMatches.set(true);
+                       }
+                   });
             }
-            catch (IOException e)
+            catch (RuntimeException rte)
             {
-                throw new RuntimeException(e);
+                // getOrdinal rethrows IOException as RTE
+                if (rte.getCause() instanceof IOException)
+                    throw (IOException) rte.getCause();
+                throw rte;
             }
 
-            if (!hasMatches)
+            if (!hasMatches.get())
                 return new BitsOrPostingList(PostingList.EMPTY, nRows);
 
             return new BitsOrPostingList(bits, getRawExpectedNodes(topK, nRows));
+        }
+    }
+
+    private static int getOrdinal(OrdinalsView ordinalsView, int segmentRowId)
+    {
+        try
+        {
+            return ordinalsView.getOrdinalForRowId(segmentRowId);
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException(e);
         }
     }
 
