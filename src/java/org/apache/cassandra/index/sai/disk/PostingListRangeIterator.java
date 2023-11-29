@@ -56,20 +56,32 @@ public class PostingListRangeIterator extends RangeIterator
 {
     private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-    public static abstract class StartStopListener
+    public abstract static class StartStopListener
     {
         public static final StartStopListener NOOP = new StartStopListener()
         {
             @Override
-            void onStart() {}
+            void onStart()
+            {
+                // noop
+            }
             @Override
-            void onStop() {}
+            void onStop()
+            {
+                // noop
+            }
 
             @Override
-            public void doOnStart() {}
+            public void doOnStart()
+            {
+                // noop
+            }
 
             @Override
-            public void doOnStop() {}
+            public void doOnStop()
+            {
+                // noop
+            }
         };
 
         private final AtomicBoolean isStarted = new AtomicBoolean(false);
