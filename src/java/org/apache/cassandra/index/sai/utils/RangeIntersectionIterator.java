@@ -20,6 +20,7 @@ package org.apache.cassandra.index.sai.utils;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -101,6 +102,14 @@ public class RangeIntersectionIterator extends RangeIterator
             }
             // If we reached here, next() has been called at least once on each range iterator and
             // the last call to next() on each iterator returned a value equal to the highestKey.
+
+            // Move the itereator that produced the highest key to the start of the list.
+            // This is an optimisation assuming that iterator is likely a more selective one.
+            // E.g.if the first range produces (1, 2, 3, ... 100) and the second one (10, 20, 30, .. 100)
+            // we'd want to start with the second.
+            if (alreadyAvanced != 0)
+                Collections.swap(ranges, 0, alreadyAvanced);
+
             return highestKey;
         }
         return endOfData();
