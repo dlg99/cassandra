@@ -56,6 +56,40 @@ public class PostingListRangeIterator extends RangeIterator
 {
     private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+    public static abstract class StartStopListener
+    {
+        public static final StartStopListener NOOP = new StartStopListener()
+        {
+            @Override
+            void onStart() {}
+            @Override
+            void onStop() {}
+
+            @Override
+            public void doOnStart() {}
+
+            @Override
+            public void doOnStop() {}
+        };
+
+        private final AtomicBoolean isStarted = new AtomicBoolean(false);
+        private final AtomicBoolean isStopped = new AtomicBoolean(false);
+
+        void onStart()
+        {
+            if (isStarted.compareAndSet(false, true))
+                doOnStart();
+        }
+        void onStop()
+        {
+            if (isStarted.get() && isStopped.compareAndSet(false, true))
+                doOnStop();
+        }
+
+        public abstract void doOnStart();
+        public abstract void doOnStop();
+    }
+
     private final Stopwatch timeToExhaust = Stopwatch.createStarted();
     private final QueryContext queryContext;
 
@@ -69,6 +103,8 @@ public class PostingListRangeIterator extends RangeIterator
     private boolean needsSkipping = false;
     private PrimaryKey skipToToken = null;
 
+    private final StartStopListener listener;
+
 
     /**
      * Create a direct PostingListRangeIterator where the underlying PostingList is materialised
@@ -78,6 +114,14 @@ public class PostingListRangeIterator extends RangeIterator
                                     PrimaryKeyMap primaryKeyMap,
                                     IndexSearcherContext searcherContext)
     {
+        this(indexContext, primaryKeyMap, searcherContext, StartStopListener.NOOP);
+    }
+
+    public PostingListRangeIterator(IndexContext indexContext,
+                                    PrimaryKeyMap primaryKeyMap,
+                                    IndexSearcherContext searcherContext,
+                                    StartStopListener listener)
+    {
         super(searcherContext.minimumKey, searcherContext.maximumKey, searcherContext.count());
 
         this.indexContext = indexContext;
@@ -85,11 +129,13 @@ public class PostingListRangeIterator extends RangeIterator
         this.postingList = searcherContext.postingList;
         this.searcherContext = searcherContext;
         this.queryContext = this.searcherContext.context;
+        this.listener = listener;
     }
 
     @Override
     protected void performSkipTo(PrimaryKey nextKey)
     {
+        listener.onStart();
         if (skipToToken != null && skipToToken.compareTo(nextKey) >= 0)
             return;
 
@@ -100,6 +146,7 @@ public class PostingListRangeIterator extends RangeIterator
     @Override
     protected PrimaryKey computeNext()
     {
+        listener.onStart();
         try
         {
             queryContext.checkpoint();
@@ -137,6 +184,7 @@ public class PostingListRangeIterator extends RangeIterator
             }
 
             FileUtils.closeQuietly(postingList, primaryKeyMap);
+            listener.onStop();
         }
         else {
             logger.warn("PostingListRangeIterator is already closed",

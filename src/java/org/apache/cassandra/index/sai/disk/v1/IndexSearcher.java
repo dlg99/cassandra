@@ -79,6 +79,11 @@ public abstract class IndexSearcher implements Closeable, SegmentOrdering
 
     protected RangeIterator toPrimaryKeyIterator(PostingList postingList, QueryContext queryContext) throws IOException
     {
+        return toPrimaryKeyIterator(postingList, queryContext, PostingListRangeIterator.StartStopListener.NOOP);
+    }
+
+    protected RangeIterator toPrimaryKeyIterator(PostingList postingList, QueryContext queryContext, PostingListRangeIterator.StartStopListener listener) throws IOException
+    {
         if (postingList == null || postingList.size() == 0)
             return RangeIterator.empty();
 
@@ -90,6 +95,6 @@ public abstract class IndexSearcher implements Closeable, SegmentOrdering
                                                                         queryContext,
                                                                         postingList.peekable());
 
-        return new PostingListRangeIterator(indexContext, primaryKeyMapFactory.newPerSSTablePrimaryKeyMap(), searcherContext);
+        return new PostingListRangeIterator(indexContext, primaryKeyMapFactory.newPerSSTablePrimaryKeyMap(), searcherContext, listener);
     }
 }

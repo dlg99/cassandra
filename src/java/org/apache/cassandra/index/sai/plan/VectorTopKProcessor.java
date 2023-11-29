@@ -191,14 +191,14 @@ public class VectorTopKProcessor
             }
         }
 
-        partitions.close();
-
         // reorder rows in partition/clustering order
         final int numResults = min(topK.size(), limit);
         for (int i = 0; i < numResults; i++) {
             var triple = topK.poll();
             addUnfiltered(unfilteredByPartition, triple.getLeft(), triple.getMiddle());
         }
+
+        partitions.close();
 
         if (partitions instanceof PartitionIterator)
             return new InMemoryPartitionIterator(command, unfilteredByPartition);

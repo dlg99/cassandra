@@ -20,6 +20,7 @@ package org.apache.cassandra.index.sai.disk.v2;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,6 +32,7 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.codahale.metrics.Reservoir;
 import io.github.jbellis.jvector.graph.SearchResult;
 import io.github.jbellis.jvector.pq.BinaryQuantization;
 import io.github.jbellis.jvector.util.Bits;
@@ -42,6 +44,7 @@ import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.index.sai.IndexContext;
 import org.apache.cassandra.index.sai.QueryContext;
 import org.apache.cassandra.index.sai.disk.PostingList;
+import org.apache.cassandra.index.sai.disk.PostingListRangeIterator;
 import org.apache.cassandra.index.sai.disk.PrimaryKeyMap;
 import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
 import org.apache.cassandra.index.sai.disk.v1.IndexSearcher;
@@ -73,12 +76,55 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 {
     private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+    private static class ReservoirBucket
+    {
+        private final int[] limits;
+        private final SlidingWindowReservoirWithQuickMean[] reservoirs;
+
+        public ReservoirBucket(int[] limits, int reservoirSize)
+        {
+            this.limits = limits;
+            Arrays.sort(limits);
+
+            this.reservoirs = new SlidingWindowReservoirWithQuickMean[limits.length];
+            for (int i = 0; i < limits.length; i++)
+                this.reservoirs[i] = new SlidingWindowReservoirWithQuickMean(reservoirSize);
+        }
+
+        public SlidingWindowReservoirWithQuickMean get(int limit)
+        {
+            int index = findClosestIndex(this.limits, limit);
+            assert index >= 0;
+            assert index < reservoirs.length;
+            return reservoirs[index];
+        }
+
+        private static int findClosestIndex(int[] limits, int target)
+        {
+            int left = 0;
+            int right = limits.length;
+
+            while (left < right)
+            {
+                int mid = (left + right) / 2;
+                if (limits[mid] == target)
+                    return mid;
+
+                if (limits[mid] < target)
+                    left = mid + 1;
+                else
+                    right = mid;
+            }
+            return left;
+        }
+    }
+
     private final JVectorLuceneOnDiskGraph graph;
     private final PrimaryKey.Factory keyFactory;
     private int globalBruteForceRows; // not final so test can inject its own setting
     private final AtomicRatio actualExpectedRatio = new AtomicRatio();
-    private final SlidingWindowReservoirWithQuickMean bruteForceRowsReservoir = new SlidingWindowReservoirWithQuickMean(100);
-    private final SlidingWindowReservoirWithQuickMean graphSearchRowsReservoir = new SlidingWindowReservoirWithQuickMean(100);
+    private final ReservoirBucket bruteForceRowsReservoir = new ReservoirBucket(new int[] {10, 100, 250, 500, Integer.MAX_VALUE}, 100);
+    private final ReservoirBucket graphSearchRowsReservoir = new ReservoirBucket(new int[] {10, 100, 250, 500, Integer.MAX_VALUE}, 100);
     private final ThreadLocal<SparseFixedBitSet> cachedBitSets;
 
     private final boolean useStatsForBruteForce = CassandraRelevantProperties.VECTOR_INDEX_SEARCHER_TRACK_STATS_FOR_BRUTE_FORCE.getBoolean();
@@ -116,11 +162,10 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
     @Override
     public RangeIterator search(Expression exp, AbstractBounds<PartitionPosition> keyRange, QueryContext context, boolean defer, int limit) throws IOException
     {
-        PostingList results = searchPosting(context, exp, keyRange, limit);
-        return toPrimaryKeyIterator(results, context);
+        return searchPosting(context, exp, keyRange, limit);
     }
 
-    private PostingList searchPosting(QueryContext context, Expression exp, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
+    private RangeIterator searchPosting(QueryContext context, Expression exp, AbstractBounds<PartitionPosition> keyRange, int limit) throws IOException
     {
         if (logger.isTraceEnabled())
             logger.trace(indexContext.logMessage("Searching on expression '{}'..."), exp);
@@ -138,20 +183,21 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
         BitsOrPostingList bitsOrPostingList = bitsOrPostingListForKeyRange(context, keyRange, queryVector, topK);
         if (bitsOrPostingList.skipANN())
         {
-            if (bitsOrPostingList.getNumScannedRows() > 0)
-            {
-                long elapsedNanosPerRow = (System.nanoTime() - startNanos) / bitsOrPostingList.getNumScannedRows();
-                bruteForceRowsReservoir.update(elapsedNanosPerRow);
-            }
-            return bitsOrPostingList.postingList();
+            return toPrimaryKeyIterator(bitsOrPostingList.postingList(),
+                                        context,
+                                        createListener(System.nanoTime() - startNanos,
+                                                       bitsOrPostingList.getNumScannedRows(),
+                                                       bruteForceRowsReservoir.get(limit)));
         }
 
         var vectorPostings = graph.search(queryVector, topK, exp.getEuclideanSearchThreshold(), limit, bitsOrPostingList.getBits(), context);
         if (bitsOrPostingList.rawExpectedNodes >= 0)
             updateExpectedNodes(vectorPostings.getVisitedCount(), bitsOrPostingList.rawExpectedNodes);
-        long elapsedNanosPerRow = (System.nanoTime() - startNanos) / vectorPostings.getVisitedCount();
-        graphSearchRowsReservoir.update(elapsedNanosPerRow);
-        return vectorPostings;
+        return toPrimaryKeyIterator(vectorPostings,
+                                    context,
+                                    createListener(System.nanoTime() - startNanos,
+                                                   vectorPostings.getVisitedCount(),
+                                                   graphSearchRowsReservoir.get(limit)));
     }
 
     /**
@@ -331,20 +377,25 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
         int expectedNodes = expectedNodesVisited(limit, nPermittedOrdinals);
 
-        // enough stats to guesstimate cost of brute force vs graph search
-        if (useStatsForBruteForce && bruteForceRowsReservoir.size() > 10 && graphSearchRowsReservoir.size() > 10)
+        if (useStatsForBruteForce)
         {
-            var bruteForceCost = bruteForceRowsReservoir.getMean() * nPermittedOrdinals;
-            var graphSearchCost = graphSearchRowsReservoir.getMean() * expectedNodes;
+            var bfr = bruteForceRowsReservoir.get(limit);
+            var gsr = graphSearchRowsReservoir.get(limit);
+            // enough stats to guesstimate cost of brute force vs graph search
+            if (bfr.size() > 10 && gsr.size() > 10)
+            {
+                var bruteForceCost = bfr.getMean() * nPermittedOrdinals;
+                var graphSearchCost = gsr.getMean() * expectedNodes;
 
-            if (logger.isDebugEnabled())
-                logger.debug("Estimated brute force cost: {} ns, graph search cost: {} ns, picking {}",
-                             bruteForceCost,
-                             graphSearchCost,
-                             bruteForceCost < graphSearchCost ? "brute force" : "graph search");
+                if (logger.isDebugEnabled())
+                    logger.debug("Estimated brute force cost: {} ns, graph search cost: {} ns, picking {}",
+                                 bruteForceCost,
+                                 graphSearchCost,
+                                 bruteForceCost < graphSearchCost ? "brute force" : "graph search");
 
-            // is brute force search cheaper?
-            return bruteForceCost < graphSearchCost;
+                // is brute force search cheaper?
+                return bruteForceCost < graphSearchCost;
+            }
         }
         // ANN index will do a bunch of extra work besides the full comparisons (performing PQ similarity for each edge);
         // brute force from sstable will also do a bunch of extra work (going through trie index to look up row).
@@ -445,20 +496,37 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             // brute force using the in-memory compressed vectors to cut down the number of results returned
             var queryVector = exp.lower.value.vector;
             var postings = findTopApproximatePostings(queryVector, rowIds, topK);
-            long elapsedNanosPerRow = (System.nanoTime() - startNanos) / numRows;
-            bruteForceRowsReservoir.update(elapsedNanosPerRow);
-            return toPrimaryKeyIterator(new ArrayPostingList(postings), context);
+            return toPrimaryKeyIterator(new ArrayPostingList(postings), context, createListener(System.nanoTime() - startNanos, numRows, bruteForceRowsReservoir.get(limit)));
         }
         // else ask the index to perform a search limited to the bits we created
         float[] queryVector = exp.lower.value.vector;
         var results = graph.search(queryVector, topK, limit, bits, context);
         updateExpectedNodes(results.getVisitedCount(), getRawExpectedNodes(topK, numRows));
-        if (results.getVisitedCount() > 0)
+        return toPrimaryKeyIterator(results, context, createListener(System.nanoTime() - startNanos, results.getVisitedCount(), graphSearchRowsReservoir.get(limit)));
+    }
+
+    PostingListRangeIterator.StartStopListener createListener(long elapsedTime, int numVisisted, Reservoir reservoir)
+    {
+        return new PostingListRangeIterator.StartStopListener()
         {
-            long elapsedNanosPerRow = (System.nanoTime() - startNanos) / results.getVisitedCount();
-            graphSearchRowsReservoir.update(elapsedNanosPerRow);
-        }
-        return toPrimaryKeyIterator(results, context);
+            private long startedNanos = 0;
+            @Override
+            public void doOnStart() {
+                startedNanos = System.nanoTime();
+            }
+
+            @Override
+            public void doOnStop() {
+                if (numVisisted == 0)
+                    return;
+
+                long elapsedNanos = elapsedTime + System.nanoTime() - startedNanos;
+                reservoir.update(elapsedNanos / numVisisted);
+            }
+        };
+    }
+    {
+
     }
 
     private int getRawExpectedNodes(int topK, int nPermittedOrdinals)
