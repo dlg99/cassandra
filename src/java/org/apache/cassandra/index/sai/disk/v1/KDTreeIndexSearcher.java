@@ -39,6 +39,7 @@ import org.apache.cassandra.index.sai.plan.Expression;
 import org.apache.cassandra.index.sai.utils.RangeIterator;
 
 import static org.apache.cassandra.index.sai.disk.v1.kdtree.BKDQueries.bkdQueryFrom;
+import static org.apache.cassandra.index.sai.plan.Expression.Op.SAI;
 
 /**
  * Executes {@link Expression}s against the kd-tree for an individual index segment.
@@ -89,7 +90,7 @@ public class KDTreeIndexSearcher extends IndexSearcher
         if (logger.isTraceEnabled())
             logger.trace(indexContext.logMessage("Searching on expression '{}'..."), exp);
 
-        if (exp.getOp().isEqualityOrRange())
+        if (exp.getOp().isEqualityOrRange() || exp.getOp() == SAI )
         {
             final BKDReader.IntersectVisitor query = bkdQueryFrom(exp, bkdReader.getNumDimensions(), bkdReader.getBytesPerDimension());
             QueryEventListener.BKDIndexEventListener listener = MulticastQueryEventListeners.of(context, perColumnEventListener);

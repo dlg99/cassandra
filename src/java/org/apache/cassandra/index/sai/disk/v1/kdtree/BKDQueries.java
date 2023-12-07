@@ -46,6 +46,11 @@ public class BKDQueries
 
     public static BKDReader.IntersectVisitor bkdQueryFrom(Expression expression, int numDim, int bytesPerDim)
     {
+        if (expression.getOp() == Expression.Op.SAI)
+        {
+            return MATCH_ALL;
+        }
+
         if (expression.lower == null && expression.upper == null)
         {
             return MATCH_ALL;

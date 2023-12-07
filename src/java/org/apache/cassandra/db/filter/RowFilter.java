@@ -37,6 +37,7 @@ import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.restrictions.ExternalRestriction;
 import org.apache.cassandra.cql3.restrictions.Restrictions;
+import org.apache.cassandra.cql3.restrictions.SingleColumnRestriction;
 import org.apache.cassandra.cql3.restrictions.StatementRestrictions;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.context.*;
@@ -288,6 +289,35 @@ public abstract class RowFilter implements Iterable<RowFilter.Expression>
 
             for (ExternalRestriction expression : restrictions.filterRestrictions().getExternalExpressions())
                 expression.addToRowFilter(this, table, options);
+
+            var srs = restrictions.filterRestrictions().getRestrictions()
+                        .stream()
+                        .filter(i -> i instanceof StatementRestrictions)
+                        .map(i -> (StatementRestrictions)i)
+                      .collect(Collectors.toList());
+
+            for (var sr: restrictions.filterRestrictions().getRestrictions())
+            {
+                var saiRestrictions = sr.saiRestrictions().stream()
+                             .filter(i -> i instanceof SingleColumnRestriction.SaiRestriction)
+                             .map(i -> (SingleColumnRestriction.SaiRestriction)i)
+                             .collect(Collectors.toList());
+
+                saiRestrictions.forEach(sai -> {
+                    List<Expression> expressions = new ArrayList<>();
+
+                    CustomOrderExpression ce = CustomOrderExpression.build(sai.column(),
+                                                                           table,
+                                                                           sai.saiIndex.getIndexMetadata(),
+                                                                           ByteBuffer.wrap(new byte[0]));
+
+                    FilterElement e = new FilterElement(false,
+                                                        expressions,
+                                                        Collections.emptyList());
+                    element.expressions.add(ce);
+                    //element.children.add(e);
+                });
+            }
 
             for (StatementRestrictions child : restrictions.children())
                 element.children.add(doBuild(child, indexManager, table, options));
@@ -1235,6 +1265,58 @@ public abstract class RowFilter implements Iterable<RowFilter.Expression>
         protected Kind kind()
         {
             return Kind.VECTOR_RADIUS;
+        }
+    }
+
+    public static class CustomOrderExpression extends Expression
+    {
+        private final IndexMetadata targetIndex;
+        private final TableMetadata table;
+
+        public CustomOrderExpression(ColumnMetadata column, TableMetadata table, IndexMetadata targetIndex, ByteBuffer value)
+        {
+            // The operator is not relevant, but Expression requires it so for now we just hardcode EQ
+            super(column, Operator.SAI, value);
+            this.targetIndex = targetIndex;
+            this.table = table;
+        }
+
+        public static CustomOrderExpression build(ColumnMetadata column, TableMetadata metadata, IndexMetadata targetIndex, ByteBuffer value)
+        {
+            //return new CustomOrderExpression(column, metadata, targetIndex, value);
+            // delegate the expression creation to the target custom index
+            return Keyspace.openAndGetStore(metadata).indexManager.getIndex(targetIndex).customOrderExpressionFor(column, metadata, value);
+        }
+
+        public IndexMetadata getTargetIndex()
+        {
+            return targetIndex;
+        }
+
+        public ByteBuffer getValue()
+        {
+            return value;
+        }
+
+        public String toString()
+        {
+            return String.format("expr(%s, %s)",
+                                 targetIndex.name,
+                                 Keyspace.openAndGetStore(table)
+                                 .indexManager
+                                 .getIndex(targetIndex)
+                                 .customExpressionValueType());
+        }
+
+        protected Kind kind()
+        {
+            return Kind.CUSTOM;
+        }
+
+        // Filtering by custom expressions isn't supported yet, so just accept any row
+        public boolean isSatisfiedBy(TableMetadata metadata, DecoratedKey partitionKey, Row row)
+        {
+            return true;
         }
     }
 

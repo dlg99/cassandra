@@ -334,6 +334,14 @@ public abstract class RestrictionSet implements Restrictions
         }
 
         @Override
+        public Set<Restriction> saiRestrictions()
+        {
+            return restrictionsValues.stream()
+                                     .filter(r -> r instanceof SingleColumnRestriction.SaiRestriction)
+                                     .collect(Collectors.toSet());
+        }
+
+        @Override
         public boolean hasIN()
         {
             return 0 != (hasBitmap & maskHasIN);

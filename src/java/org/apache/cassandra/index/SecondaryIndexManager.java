@@ -1199,11 +1199,22 @@ public class SecondaryIndexManager implements IndexRegistry, INotificationConsum
             {
                 // Only a single custom expression is allowed per query and, if present,
                 // we want to always favour the index specified in such an expression
-                RowFilter.CustomExpression customExpression = (RowFilter.CustomExpression) expression;
-                logger.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
-                Tracing.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
-                Index.Group group = getIndexGroup(customExpression.getTargetIndex());
-                return group == null ? null : group.queryPlanFor(rowFilter);
+                if (expression instanceof RowFilter.CustomExpression)
+                {
+                    RowFilter.CustomExpression customExpression = (RowFilter.CustomExpression) expression;
+                    logger.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
+                    Tracing.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
+                    Index.Group group = getIndexGroup(customExpression.getTargetIndex());
+                    return group == null ? null : group.queryPlanFor(rowFilter);
+                }
+                else if (expression instanceof RowFilter.CustomOrderExpression)
+                {
+                    RowFilter.CustomOrderExpression customExpression = (RowFilter.CustomOrderExpression) expression;
+                    logger.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
+                    Tracing.trace("Command contains a custom index expression, using target index {}", customExpression.getTargetIndex().name);
+                    Index.Group group = getIndexGroup(customExpression.getTargetIndex());
+                    return group == null ? null : group.queryPlanFor(rowFilter);
+                }
             }
         }
 

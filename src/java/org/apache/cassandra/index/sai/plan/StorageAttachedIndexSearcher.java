@@ -30,6 +30,7 @@ import javax.annotation.Nullable;
 
 import com.google.common.collect.Iterators;
 
+import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
@@ -119,6 +120,10 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         if (!command.isTopK())
             return queryIndexes.get();
 
+        var isSai = controller.filterOperation().expressions().stream().anyMatch(x -> x.operator() == Operator.SAI);
+//        if (isSai)
+//            return queryIndexes.get();
+
         // If there are shadowed primary keys, we have to at least query twice.
         // First time to find out there are shadowed keys, second time to find out there are no more shadow keys.
         int loopsCount = 1;
@@ -130,7 +135,9 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
             long lastShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             final var softLimit = controller.currentSoftLimitEstimate();
             ResultRetriever result = queryIndexes.get();
-            UnfilteredPartitionIterator topK = (UnfilteredPartitionIterator)new VectorTopKProcessor(command).filter(result);
+            UnfilteredPartitionIterator topK = isSai
+                                               ? queryIndexes.get()
+                                               : (UnfilteredPartitionIterator)new VectorTopKProcessor(command).filter(result);
 
             long currentShadowedKeysCount = queryContext.getShadowedPrimaryKeys().size();
             long newShadowedKeysCount = currentShadowedKeysCount - lastShadowedKeysCount;

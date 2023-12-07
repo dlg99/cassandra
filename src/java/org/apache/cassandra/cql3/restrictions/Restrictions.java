@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.cql3.restrictions;
 
+import java.util.Collections;
 import java.util.Set;
 
 import org.apache.cassandra.schema.ColumnMetadata;
@@ -33,6 +34,11 @@ public interface Restrictions extends Restriction
      * @return the restrictions applied to the specified column
      */
     Set<Restriction> getRestrictions(ColumnMetadata columnDef);
+
+    default Set<Restriction> saiRestrictions()
+    {
+        return Collections.emptySet();
+    }
 
     /**
      * Checks if this <code>Restrictions</code> is empty or not.

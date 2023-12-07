@@ -268,6 +268,33 @@ public class QueryController
     // This is an ANN only query
     public RangeIterator getTopKRows(RowFilter.Expression expression)
     {
+        if (expression instanceof RowFilter.CustomOrderExpression)
+        {
+            var planExpression = new Expression(getContext(expression))
+                                 .add(Operator.SAI, expression.getIndexValue().duplicate());
+
+            int limit = getExactLimit();
+            // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
+            RangeIterator memtableResults = getContext(expression).searchMemtable(queryContext, planExpression, mergeRange, limit);
+
+            var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
+
+            try
+            {
+                List<RangeIterator> sstableIntersections = queryView.view.values()
+                                                                         .stream()
+                                                                         .map(e -> createRowIdIterator(e, true, limit))
+                                                                         .collect(Collectors.toList());
+                return TermIterator.build(sstableIntersections, memtableResults, queryView.referencedIndexes, queryContext);
+            }
+            catch (Throwable t)
+            {
+                // all sstable indexes in view have been referenced, need to clean up when exception is thrown
+                queryView.referencedIndexes.forEach(SSTableIndex::release);
+                throw t;
+            }
+        }
+
         assert expression.operator() == Operator.ANN;
         var planExpression = new Expression(getContext(expression))
                              .add(Operator.ANN, expression.getIndexValue().duplicate());

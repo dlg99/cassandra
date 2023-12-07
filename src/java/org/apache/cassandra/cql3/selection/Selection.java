@@ -142,6 +142,7 @@ public abstract class Selection
                              boundNames,
                              Collections.emptySet(),
                              Collections.emptySet(),
+                             Collections.emptySet(),
                              true,
                              isJson,
                              returnStaticContentOnPartitionWithNoRows);
@@ -170,6 +171,7 @@ public abstract class Selection
                                           List<Selectable> selectables,
                                           VariableSpecifications boundNames,
                                           Set<ColumnMetadata> orderingColumns,
+                                          Set<ColumnMetadata> secondaryOrderingColumns,
                                           Set<ColumnMetadata> nonPKRestrictedColumns,
                                           boolean hasGroupBy,
                                           boolean isJson,
@@ -181,7 +183,9 @@ public abstract class Selection
                 SelectorFactories.createFactoriesAndCollectColumnDefinitions(selectables, null, table, selectedColumns, boundNames);
         SelectionColumnMapping mapping = collectColumnMappings(table, factories);
 
-        Set<ColumnMetadata> filteredOrderingColumns = filterOrderingColumns(orderingColumns,
+        Set<ColumnMetadata> filteredOrderingColumns = !secondaryOrderingColumns.isEmpty()
+                                                      ? secondaryOrderingColumns
+                                                      : filterOrderingColumns(orderingColumns,
                                                                             selectedColumns,
                                                                             factories,
                                                                             isJson);

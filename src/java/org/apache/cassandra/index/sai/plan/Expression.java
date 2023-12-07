@@ -52,7 +52,7 @@ public class Expression
 
     public enum Op
     {
-        EQ, MATCH, PREFIX, NOT_EQ, RANGE, CONTAINS_KEY, CONTAINS_VALUE, IN, ANN, BOUNDED_ANN;
+        EQ, MATCH, PREFIX, NOT_EQ, RANGE, CONTAINS_KEY, CONTAINS_VALUE, IN, ANN, BOUNDED_ANN, SAI;
 
         public static Op valueOf(Operator operator)
         {
@@ -60,6 +60,9 @@ public class Expression
             {
                 case EQ:
                     return EQ;
+
+                case SAI:
+                    return SAI;
 
                 case NEQ:
                     return NOT_EQ;
@@ -146,6 +149,7 @@ public class Expression
             case LIKE_MATCHES:
             case ANALYZER_MATCHES:
             case EQ:
+            case SAI:
             case CONTAINS:
             case CONTAINS_KEY:
                 lower = new Bound(value, validator, true);
@@ -228,6 +232,8 @@ public class Expression
     {
         // ANN accepts all results
         if (operation == Op.ANN)
+            return true;
+        if (operation == Op.SAI)
             return true;
 
         if (!TypeUtil.isValid(columnValue, validator))

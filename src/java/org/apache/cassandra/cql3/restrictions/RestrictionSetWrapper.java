@@ -137,4 +137,10 @@ class RestrictionSetWrapper implements Restrictions
     {
         return restrictions.getRestrictions(columnDef);
     }
+
+    @Override
+    public Set<Restriction> saiRestrictions()
+    {
+        return restrictions.saiRestrictions();
+    }
 }

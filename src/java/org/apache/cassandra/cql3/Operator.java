@@ -272,6 +272,20 @@ public enum Operator
             return true;
         }
     },
+    SAI(32)
+    {
+        @Override
+        public String toString()
+        {
+            return "SAI";
+        }
+
+        @Override
+        public boolean isSatisfiedBy(AbstractType<?> type, ByteBuffer leftOperand, ByteBuffer rightOperand)
+        {
+            return true;
+        }
+    },
     /**
      * An operator that only performs matching against analyzed columns.
      */

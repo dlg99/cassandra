@@ -37,6 +37,7 @@ import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.IndexRegistry;
+import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.QueryState;
@@ -233,6 +234,35 @@ public class StatementRestrictions
         this.children = children;
     }
 
+    public RestrictionSet getNonPrimaryKeyRestrictions()
+    {
+        return nonPrimaryKeyRestrictions;
+    }
+
+    public static StatementRestrictions create(StatementType type,
+                                               TableMetadata table,
+                                               WhereClause whereClause,
+                                               VariableSpecifications boundNames,
+                                               List<Ordering> orderings,
+                                               Set<ColumnMetadata> secondaryOrderingColumns,
+                                               boolean selectsOnlyStaticColumns,
+                                               boolean allowFiltering,
+                                               boolean forView,
+                                               SecondaryIndexManager indexManager)
+    {
+        return new Builder(type,
+                           table,
+                           whereClause,
+                           boundNames,
+                           orderings,
+                           secondaryOrderingColumns,
+                           selectsOnlyStaticColumns,
+                           type.allowUseOfSecondaryIndices(),
+                           allowFiltering,
+                           forView,
+                           indexManager).build();
+    }
+
     public static StatementRestrictions create(StatementType type,
                                                TableMetadata table,
                                                WhereClause whereClause,
@@ -247,10 +277,12 @@ public class StatementRestrictions
                            whereClause,
                            boundNames,
                            orderings,
+                           new HashSet<>(),
                            selectsOnlyStaticColumns,
                            type.allowUseOfSecondaryIndices(),
                            allowFiltering,
-                           forView).build();
+                           forView,
+                           null).build();
     }
 
     public static StatementRestrictions create(StatementType type,
@@ -268,10 +300,12 @@ public class StatementRestrictions
                            whereClause,
                            boundNames,
                            orderings,
+                           new HashSet<>(),
                            selectsOnlyStaticColumns,
                            allowUseOfSecondaryIndices,
                            allowFiltering,
-                           forView).build();
+                           forView,
+                           null).build();
     }
 
     /**
@@ -290,6 +324,8 @@ public class StatementRestrictions
         private final VariableSpecifications boundNames;
 
         private final List<Ordering> orderings;
+        private final Set<ColumnMetadata> secondaryOrderingColumns;
+        private final SecondaryIndexManager indexManager;
         private final boolean selectsOnlyStaticColumns;
         private final boolean allowUseOfSecondaryIndices;
         private final boolean allowFiltering;
@@ -300,20 +336,24 @@ public class StatementRestrictions
                        WhereClause whereClause,
                        VariableSpecifications boundNames,
                        List<Ordering> orderings,
+                       Set<ColumnMetadata> secondaryOrderingColumns,
                        boolean selectsOnlyStaticColumns,
                        boolean allowUseOfSecondaryIndices,
                        boolean allowFiltering,
-                       boolean forView)
+                       boolean forView,
+                       SecondaryIndexManager indexManager)
         {
             this.type = type;
             this.table = table;
             this.whereClause = whereClause;
             this.boundNames = boundNames;
             this.orderings = orderings;
+            this.secondaryOrderingColumns = secondaryOrderingColumns;
             this.selectsOnlyStaticColumns = selectsOnlyStaticColumns;
             this.allowUseOfSecondaryIndices = allowUseOfSecondaryIndices;
             this.allowFiltering = allowFiltering;
             this.forView = forView;
+            this.indexManager = indexManager;
         }
 
         public StatementRestrictions build()
@@ -348,27 +388,27 @@ public class StatementRestrictions
             RestrictionSet.Builder nonPrimaryKeyRestrictionSet = RestrictionSet.builder();
             ImmutableSet.Builder<ColumnMetadata> notNullColumnsBuilder = ImmutableSet.builder();
 
-        /*
-         * WHERE clause. For a given entity, rules are:
-         *   - EQ relation conflicts with anything else (including a 2nd EQ)
-         *   - Can't have more than one LT(E) relation (resp. GT(E) relation)
-         *   - IN relation are restricted to row keys (for now) and conflicts with anything else (we could
-         *     allow two IN for the same entity but that doesn't seem very useful)
-         *   - The value_alias cannot be restricted in any way (we don't support wide rows with indexed value
-         *     in CQL so far)
-         *   - CONTAINS and CONTAINS_KEY cannot be used with UPDATE or DELETE
-         */
-        for (Relation relation : element.relations())
-        {
-            if ((relation.isContains() || relation.isContainsKey()) && (type.isUpdate() || type.isDelete()))
+            /*
+             * WHERE clause. For a given entity, rules are:
+             *   - EQ relation conflicts with anything else (including a 2nd EQ)
+             *   - Can't have more than one LT(E) relation (resp. GT(E) relation)
+             *   - IN relation are restricted to row keys (for now) and conflicts with anything else (we could
+             *     allow two IN for the same entity but that doesn't seem very useful)
+             *   - The value_alias cannot be restricted in any way (we don't support wide rows with indexed value
+             *     in CQL so far)
+             *   - CONTAINS and CONTAINS_KEY cannot be used with UPDATE or DELETE
+             */
+            for (Relation relation : element.relations())
             {
-                throw invalidRequest("Cannot use %s with %s", type, relation.operator());
-            }
+                if ((relation.isContains() || relation.isContainsKey()) && (type.isUpdate() || type.isDelete()))
+                {
+                    throw invalidRequest("Cannot use %s with %s", type, relation.operator());
+                }
 
-            if (relation.operator() == Operator.IS_NOT)
-            {
-                if (!forView)
-                    throw invalidRequest("Unsupported restriction: %s", relation);
+                if (relation.operator() == Operator.IS_NOT)
+                {
+                    if (!forView)
+                        throw invalidRequest("Unsupported restriction: %s", relation);
 
                     notNullColumnsBuilder.addAll(relation.toRestriction(table, boundNames).getColumnDefs());
                 }
@@ -461,6 +501,36 @@ public class StatementRestrictions
                                                                                           indexRegistry);
                     filterRestrictionsBuilder.add(customExpression);
                 }
+
+                // todo ????
+//                if (secondaryOrderingColumns.size() > 1)
+//                    throw new InvalidRequestException("Cannot specify more than one ordering by SAI");
+//                else if (secondaryOrderingColumns.size() == 1)
+//                {
+//                    if (orderings.size() > 1)
+//                        throw new InvalidRequestException("SAI ordering does not support secondary ordering");
+//
+//                    var direction = orderings.get(0).direction;
+//                    var column = secondaryOrderingColumns.iterator().next();
+//
+//                    var ordering = new Ordering.SaiOrdering(column, indexManager, direction);
+//                    SingleRestriction restriction = ordering.toRestriction();
+//                    var er = new ExternalRestriction() {
+//                        @Override
+//                        public void addToRowFilter(RowFilter.Builder filter, TableMetadata table, QueryOptions options)
+//                        {
+//                            restriction.addToRowFilter(filter, indexManager, options);
+//                        }
+//
+//                        @Override
+//                        public boolean needsFiltering(Index.Group indexGroup)
+//                        {
+//                            return restriction.needsFiltering(indexGroup);
+//                        }
+//                    };
+//                    filterRestrictionsBuilder.add(er);
+//                }
+
 
                 hasQueriableClusteringColumnIndex = clusteringColumnsRestrictions.hasSupportingIndex(indexRegistry);
                 hasQueriableIndex = element.containsCustomExpressions()
@@ -677,6 +747,21 @@ public class StatementRestrictions
                 if (annOrdering.direction != Ordering.Direction.ASC)
                     throw new InvalidRequestException("Descending ANN ordering is not supported");
                 SingleRestriction restriction = annOrdering.expression.toRestriction();
+                receiver.addRestriction(restriction, false);
+            }
+
+            if (secondaryOrderingColumns.size() > 1)
+                throw new InvalidRequestException("Cannot specify more than one ordering by SAI");
+            else if (secondaryOrderingColumns.size() == 1)
+            {
+                if (orderings.size() > 1)
+                    throw new InvalidRequestException("SAI ordering does not support secondary ordering");
+
+                var direction = orderings.get(0).direction;
+                var column = secondaryOrderingColumns.iterator().next();
+
+                var ordering = new Ordering.SaiOrdering(column, indexManager, direction);
+                SingleRestriction restriction = ordering.toRestriction();
                 receiver.addRestriction(restriction, false);
             }
         }

@@ -594,32 +594,42 @@ public class StorageAttachedIndex implements Index
     @Override
     public void postQuerySort(ResultSet cqlRows, Restriction restriction, int columnIndex, QueryOptions options)
     {
-        // For now, only support ANN
-        assert restriction instanceof SingleColumnRestriction.AnnRestriction;
+        if (restriction instanceof SingleColumnRestriction.AnnRestriction)
+        {
+            Preconditions.checkState(indexContext.isVector());
 
-        Preconditions.checkState(indexContext.isVector());
+            SingleColumnRestriction.AnnRestriction annRestriction = (SingleColumnRestriction.AnnRestriction) restriction;
+            VectorSimilarityFunction similarityFunction = indexContext.getIndexWriterConfig().getSimilarityFunction();
 
-        SingleColumnRestriction.AnnRestriction annRestriction = (SingleColumnRestriction.AnnRestriction) restriction;
-        VectorSimilarityFunction similarityFunction = indexContext.getIndexWriterConfig().getSimilarityFunction();
+            float[] targetVector = TypeUtil.decomposeVector(indexContext, annRestriction.value(options).duplicate());
 
-        float[] targetVector = TypeUtil.decomposeVector(indexContext, annRestriction.value(options).duplicate());
+            List<List<ByteBuffer>> buffRows = cqlRows.rows;
+            // Decorate-sort-undecorate to optimize sorting of vectors by their similarity scores
+            List<Pair<List<ByteBuffer>, Double>> listPairsVectorsScores = buffRows.stream()
+                                                                                  .map(row -> {
+                                                                                      ByteBuffer vectorBuffer = row.get(columnIndex);
+                                                                                      float[] vector = TypeUtil.decomposeVector(indexContext, vectorBuffer.duplicate());
+                                                                                      Double score = (double) similarityFunction.compare(vector, targetVector);
+                                                                                      return Pair.create(row, score);
+                                                                                  })
+                                                                                  .collect(Collectors.toList());
+            listPairsVectorsScores.sort(Comparator.comparing(pair -> pair.right, Comparator.reverseOrder()));
+            List<List<ByteBuffer>> sortedRows = listPairsVectorsScores.stream()
+                                                                      .map(pair -> pair.left)
+                                                                      .collect(Collectors.toList());
 
-        List<List<ByteBuffer>> buffRows = cqlRows.rows;
-        // Decorate-sort-undecorate to optimize sorting of vectors by their similarity scores
-        List<Pair<List<ByteBuffer>, Double>> listPairsVectorsScores = buffRows.stream()
-                                                                              .map(row -> {
-                                                                                  ByteBuffer vectorBuffer = row.get(columnIndex);
-                                                                                  float[] vector = TypeUtil.decomposeVector(indexContext, vectorBuffer.duplicate());
-                                                                                  Double score = (double) similarityFunction.compare(vector, targetVector);
-                                                                                  return Pair.create(row, score);
-                                                                              })
-                                                                              .collect(Collectors.toList());
-        listPairsVectorsScores.sort(Comparator.comparing(pair -> pair.right, Comparator.reverseOrder()));
-        List<List<ByteBuffer>> sortedRows = listPairsVectorsScores.stream()
-                                                                  .map(pair -> pair.left)
-                                                                  .collect(Collectors.toList());
+            cqlRows.rows = sortedRows;
+        }
+        else if (restriction instanceof SingleColumnRestriction.SaiRestriction)
+        {
+            SingleColumnRestriction.SaiRestriction r = (SingleColumnRestriction.SaiRestriction) restriction;
 
-        cqlRows.rows = sortedRows;
+            var rowType = r.isReversed() ? indexContext.getDefinition().type.reversed() : indexContext.getDefinition().type;
+
+            cqlRows.rows.sort(Comparator.comparing(row -> row.get(columnIndex), rowType));
+        }
+        else
+            throw new UnsupportedOperationException("Unsupported restriction type: " + restriction.getClass().getName());
     }
 
     @Override

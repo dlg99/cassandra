@@ -22,10 +22,91 @@ import org.junit.Test;
 import org.apache.cassandra.cql3.CQLTester;
 
 import static java.util.Arrays.asList;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class SelectOrderByTest extends CQLTester
 {
+
+    @Test
+    public void testSelectAndOrder2ndaryIndex() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id int, a int, b int, c int, d int, PRIMARY KEY (a, id))");
+        createIndex("CREATE CUSTOM INDEX d_idx ON %s(d) USING 'StorageAttachedIndex'");
+
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 3, 0, 1, 0, 2);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 4, 0, 1, 1, 1);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 0, 0, 1, 2, 0);
+
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 0, 0, 0, 0, 5);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 1, 0, 0, 1, 4);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 2, 0, 0, 2, 3);
+
+        flush();
+
+        //var res = execute("SELECT d FROM %s WHERE a=? ORDER BY a ASC LIMIT 5", 0);
+        var res = execute("SELECT d FROM %s WHERE a=? ORDER BY d ASC LIMIT 5", 0);
+        assertTrue(res.toString(), res.size() > 0);
+
+        assertRows(res, row(0), row(1), row(2), row(3), row(4));
+
+//        var res2 = execute("SELECT d FROM %s WHERE a=? ORDER BY d DESC LIMIT 5", 0);
+//        assertTrue(res2.toString(), res2.size() > 0);
+//
+//        assertRows(res2, row(5), row(4), row(3), row(2), row(1));
+
+//        int d0 = (int)row(0)[0];
+//        int d1 = (int)row(1)[0];
+//        int d2 = (int)row(2)[0];
+//        int d3 = (int)row(3)[0];
+//        int d4 = (int)row(4)[0];
+//
+//        assertEquals(0, d0);
+//        assertEquals(1, d1);
+//        assertEquals(2, d2);
+//        assertEquals(3, d3);
+//        assertEquals(4, d4);
+
+
+
+//        beforeAndAfterFlush(() -> {
+//            assertInvalid("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY c ASC", 0);
+//            assertInvalid("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY c DESC", 0);
+//            assertInvalid("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b ASC, c DESC", 0);
+//            assertInvalid("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b DESC, c ASC", 0);
+//            assertInvalid("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY d ASC", 0);
+//
+//            // select and order by b
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b ASC", 0),
+//                       row(0), row(0), row(0), row(1), row(1), row(1));
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b DESC", 0),
+//                       row(1), row(1), row(1), row(0), row(0), row(0));
+//
+//            assertRows(execute("SELECT b, blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b ASC", 0),
+//                       row(0, 0), row(0, 0), row(0, 0), row(1, 1), row(1, 1), row(1, 1));
+//            assertRows(execute("SELECT b, blobAsInt(intAsBlob(b)) FROM %s WHERE a=? ORDER BY b DESC", 0),
+//                       row(1, 1), row(1, 1), row(1, 1), row(0, 0), row(0, 0), row(0, 0));
+//
+//            // select c, order by b
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(c)) FROM %s WHERE a=? ORDER BY b ASC", 0),
+//                       row(0), row(1), row(2), row(0), row(1), row(2));
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(c)) FROM %s WHERE a=? ORDER BY b DESC", 0),
+//                       row(2), row(1), row(0), row(2), row(1), row(0));
+//
+//            // select c, order by b, c
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(c)) FROM %s WHERE a=? ORDER BY b ASC, c ASC", 0),
+//                       row(0), row(1), row(2), row(0), row(1), row(2));
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(c)) FROM %s WHERE a=? ORDER BY b DESC, c DESC", 0),
+//                       row(2), row(1), row(0), row(2), row(1), row(0));
+//
+//            // select d, order by b, c
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(d)) FROM %s WHERE a=? ORDER BY b ASC, c ASC", 0),
+//                       row(0), row(1), row(2), row(3), row(4), row(5));
+//            assertRows(execute("SELECT blobAsInt(intAsBlob(d)) FROM %s WHERE a=? ORDER BY b DESC, c DESC", 0),
+//                       row(5), row(4), row(3), row(2), row(1), row(0));
+//        });
+    }
+
     @Test
     public void testNormalSelectionOrderSingleClustering() throws Throwable
     {

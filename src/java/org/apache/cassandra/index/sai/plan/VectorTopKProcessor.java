@@ -307,7 +307,7 @@ public class VectorTopKProcessor
     @Nullable
     private StorageAttachedIndex findVectorIndexFor(SecondaryIndexManager sim, RowFilter.Expression e)
     {
-        if (e.operator() != Operator.ANN)
+        if (e.operator() != Operator.ANN && e.operator() != Operator.SAI)
             return null;
 
         Optional<Index> index = sim.getBestIndexFor(e);

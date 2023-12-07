@@ -43,7 +43,8 @@ import static org.apache.cassandra.cql3.statements.RequestValidations.invalidReq
  * a value (term). For example, {@code <key> > "start" or "colname1" = "somevalue"}.
  *
  */
-public final class SingleColumnRelation extends Relation
+public final class
+SingleColumnRelation extends Relation
 {
     private final ColumnIdentifier entity;
     private final Term.Raw mapKey;

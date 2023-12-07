@@ -23,6 +23,8 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.cassandra.db.filter.RowFilter;
+import org.apache.cassandra.index.SecondaryIndexManager;
+import org.apache.cassandra.index.sai.StorageAttachedIndex;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.Term.Terminal;
@@ -871,6 +873,101 @@ public abstract class SingleColumnRestriction implements SingleRestriction
         public boolean isAnn()
         {
             return true;
+        }
+    }
+
+    public static final class SaiRestriction extends SingleColumnRestriction
+    {
+
+        public final StorageAttachedIndex saiIndex;
+        private final Ordering.Direction direction;
+
+        public SaiRestriction(ColumnMetadata columnDef,
+                              SecondaryIndexManager indexManager,
+                              Ordering.Direction direction)
+        {
+            super(columnDef);
+
+            this.direction = direction;
+
+            assert indexManager != null : "Index manager should not be null for SAI restriction";
+
+            var secondaryIndex = indexManager.listIndexes().stream()
+                                             .filter((i) -> i.dependsOn(columnDef) && i instanceof StorageAttachedIndex)
+                                             .findFirst();
+            assert secondaryIndex.isPresent() : "No SAI index found for column " + columnDef.name;
+
+            this.saiIndex = (StorageAttachedIndex) secondaryIndex.get();
+            assert !saiIndex.getIndexContext().isVector() : "Vector index should use ANN";
+        }
+
+        public boolean isReversed()
+        {
+            return direction == Ordering.Direction.DESC;
+        }
+
+        public ColumnMetadata column()
+        {
+            return columnDef;
+        }
+
+        @Override
+        public void addFunctionsTo(List<Function> functions)
+        {
+            throw new UnsupportedOperationException("SaiRestriction.addFunctionsTo");
+        }
+
+        @Override
+        MultiColumnRestriction toMultiColumnRestriction()
+        {
+            throw new UnsupportedOperationException("SaiRestriction.toMultiColumnRestriction");
+        }
+
+        @Override
+        public void addToRowFilter(RowFilter.Builder filter,
+                                   IndexRegistry indexRegistry,
+                                   QueryOptions options)
+        {
+            System.out.println("SaiRestriction.addToRowFilter");
+            //filter.addCustomIndexExpression();
+            // nothing to add
+        }
+
+        @Override
+        public MultiCBuilder appendTo(MultiCBuilder builder, QueryOptions options)
+        {
+            throw new UnsupportedOperationException("SaiRestriction.appendTo");
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("SAI(%s)", saiIndex.toString());
+        }
+
+        @Override
+        public SingleRestriction doMergeWith(SingleRestriction otherRestriction)
+        {
+            throw invalidRequest("%s cannot be restricted by both SAI and %s", columnDef.name, otherRestriction.toString());
+        }
+
+        @Override
+        protected boolean isSupportedBy(Index index)
+        {
+            if (index instanceof StorageAttachedIndex)
+            {
+                StorageAttachedIndex other = (StorageAttachedIndex) index;
+                return !other.getIndexContext().isVector()
+                       && saiIndex.getIndexMetadata().equals(other.getIndexMetadata())
+                       && saiIndex.getIndexContext().equals(other.getIndexContext());
+            }
+            return false;
+        }
+
+        @Override
+        public boolean isAnn()
+        {
+            return false;
         }
     }
 

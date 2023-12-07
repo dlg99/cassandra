@@ -425,6 +425,12 @@ public interface Index
         return new RowFilter.CustomExpression(metadata, getIndexMetadata(), value);
     }
 
+
+    default RowFilter.CustomOrderExpression customOrderExpressionFor(ColumnMetadata column, TableMetadata metadata, ByteBuffer value)
+    {
+        return new RowFilter.CustomOrderExpression(column, metadata, getIndexMetadata(), value);
+    }
+
     /**
      * Transform an initial RowFilter into the filter that will still need to applied
      * to a set of Rows after the index has performed it's initial scan.

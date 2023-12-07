@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3;
 
 import org.apache.cassandra.cql3.restrictions.SingleColumnRestriction;
 import org.apache.cassandra.cql3.restrictions.SingleRestriction;
+import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 
@@ -101,6 +102,41 @@ public class Ordering
         public SingleRestriction toRestriction()
         {
             return new SingleColumnRestriction.AnnRestriction(column, vectorValue);
+        }
+
+        @Override
+        public ColumnMetadata getColumn()
+        {
+            return column;
+        }
+    }
+
+    /**
+     * An expression used in ordering using SAI.
+     */
+    public static class SaiOrdering implements Expression
+    {
+        final ColumnMetadata column;
+        final SecondaryIndexManager indexManager;
+        final Ordering.Direction direction;
+
+        public SaiOrdering(ColumnMetadata column, SecondaryIndexManager indexManager, Ordering.Direction direction)
+        {
+            this.column = column;
+            this.indexManager = indexManager;
+            this.direction = direction;
+        }
+
+        @Override
+        public boolean hasNonClusteredOrdering()
+        {
+            return true;
+        }
+
+        @Override
+        public SingleRestriction toRestriction()
+        {
+            return new SingleColumnRestriction.SaiRestriction(column, indexManager, direction);
         }
 
         @Override
