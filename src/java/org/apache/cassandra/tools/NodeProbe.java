@@ -1718,24 +1718,27 @@ public class NodeProbe implements AutoCloseable
 
     public Double[] metricPercentilesAsArray(CassandraMetricsRegistry.JmxHistogramMBean metric)
     {
-        return new Double[]{ metric.get50thPercentile(),
-                Double.valueOf(metric.get75thPercentile()),
-                Double.valueOf(metric.get95thPercentile()),
-                Double.valueOf(metric.get98thPercentile()),
-                Double.valueOf(metric.get99thPercentile()),
-                Double.valueOf(metric.getMin()),
-                Double.valueOf(metric.getMax())};
+        var snap = metric.getSnapshot();
+
+        return new Double[]{ snap.getMean(),
+                Double.valueOf(snap.get75thPercentile()),
+                Double.valueOf(snap.get95thPercentile()),
+                Double.valueOf(snap.get98thPercentile()),
+                Double.valueOf(snap.get99thPercentile()),
+                Double.valueOf(snap.getMin()),
+                Double.valueOf(snap.getMax())};
     }
 
     public Double[] metricPercentilesAsArray(CassandraMetricsRegistry.JmxTimerMBean metric)
     {
-        return new Double[]{ Double.valueOf(metric.get50thPercentile()),
-                             Double.valueOf(metric.get75thPercentile()),
-                             Double.valueOf(metric.get95thPercentile()),
-                             Double.valueOf(metric.get98thPercentile()),
-                             Double.valueOf(metric.get99thPercentile()),
-                             Double.valueOf(metric.getMin()),
-                             Double.valueOf(metric.getMax())};
+        var snap = metric.getSnapshot();
+        return new Double[]{ Double.valueOf(snap.getMean()),
+                             Double.valueOf(snap.get75thPercentile()),
+                             Double.valueOf(snap.get95thPercentile()),
+                             Double.valueOf(snap.get98thPercentile()),
+                             Double.valueOf(snap.get99thPercentile()),
+                             Double.valueOf(snap.getMin()),
+                             Double.valueOf(snap.getMax())};
     }
 
     public TabularData getCompactionHistory()

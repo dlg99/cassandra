@@ -279,6 +279,8 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public interface JmxHistogramMBean extends MetricMBean
     {
+        Snapshot getSnapshot();
+
         long getCount();
 
         long getMin();
@@ -317,6 +319,11 @@ public class CassandraMetricsRegistry extends MetricRegistry
         {
             super(objectName);
             this.metric = metric;
+        }
+
+        public Snapshot getSnapshot()
+        {
+            return metric.getSnapshot();
         }
 
         @Override
@@ -512,6 +519,8 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public interface JmxTimerMBean extends JmxMeterMBean
     {
+        Snapshot getSnapshot();
+
         double getMin();
 
         double getMax();
@@ -561,6 +570,12 @@ public class CassandraMetricsRegistry extends MetricRegistry
         public double get50thPercentile()
         {
             return metric.getSnapshot().getMedian() * durationFactor;
+        }
+
+        @Override
+        public Snapshot getSnapshot()
+        {
+            return metric.getSnapshot();
         }
 
         @Override
