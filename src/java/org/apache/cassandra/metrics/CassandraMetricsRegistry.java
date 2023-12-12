@@ -31,6 +31,7 @@ import javax.management.ObjectName;
 import com.google.common.annotations.VisibleForTesting;
 
 import com.codahale.metrics.*;
+import org.apache.bookkeeper.stats.codahale.FastTimer;
 import org.apache.cassandra.utils.MBeanWrapper;
 
 /**
@@ -98,7 +99,7 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Timer timer(MetricName name)
     {
-        Timer timer = register(name, new Timer(new DecayingEstimatedHistogramReservoir()));
+        FastTimer timer = register(name, new FastTimer());
         registerMBean(timer, name.getMBeanName());
 
         return timer;

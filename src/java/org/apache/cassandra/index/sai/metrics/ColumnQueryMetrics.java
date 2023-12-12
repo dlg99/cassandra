@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.Timer;
+import org.apache.bookkeeper.stats.codahale.FastTimer;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
 

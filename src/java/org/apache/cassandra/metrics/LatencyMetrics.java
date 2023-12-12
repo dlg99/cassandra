@@ -176,6 +176,8 @@ public class LatencyMetrics
         }
     }
 
+    // todo: switch to bk FastTimer.
+    // unclear what to do with parent.add() in case of FastTimer
     public class LatencyMetricsTimer extends Timer
     {
 
