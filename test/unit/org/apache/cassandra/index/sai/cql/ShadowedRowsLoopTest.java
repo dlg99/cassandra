@@ -200,6 +200,8 @@ public class ShadowedRowsLoopTest extends VectorTester
 
     public void shadowedLoopTest(int limit) throws Throwable
     {
+        resetMetrics();
+        
         QueryController.allowSpeculativeLimits = false;
         search(queryVector, limit);
         Metrics resultNoSp = getMetrics();
