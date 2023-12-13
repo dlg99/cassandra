@@ -26,9 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Copied from BK's code to fix a bug with ignoring metrics in the first bucket.
- * getRate() changed to
- *    int t = getNow(getHash());
- *
+ * getRate() is changed
  *    TODO: push this to BK and pick up the fix/lib later.
  */
 
@@ -488,8 +486,9 @@ public class FastTimerFixed extends FastTimer
      */
     public double getRate(int seconds) {
         seconds = Math.min(seconds, timeWindow - 2);
-        int t = getNow(getHash()); // start from last completed second
-        int secFrom = t - seconds;
+        int t = getNow(getHash());
+        // start from last completed second
+        int secFrom = t - seconds - 1;
         long sum = 0;
         for (int h = 0; h < HASH_SIZE; h++) {
             for (int i = t; i > secFrom; i--) {
