@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Copied from BK's code to fix a bug with ignoring metrics in the first bucket.
  * getRate() is changed
  *    TODO: push this to BK and pick up the fix/lib later.
+ *    See https://github.com/apache/bookkeeper/pull/4152
  */
 
 /**
