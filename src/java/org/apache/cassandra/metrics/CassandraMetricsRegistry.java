@@ -98,7 +98,7 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Timer timer(MetricName name)
     {
-        FastTimerFixed timer = register(name, new FastTimerFixed(60, FastTimerFixed.Buckets.coarse));
+        FastTimerFixed timer = register(name, new FastTimerFixed(60, FastTimerFixed.Buckets.none));
         registerMBean(timer, name.getMBeanName());
 
         return timer;
