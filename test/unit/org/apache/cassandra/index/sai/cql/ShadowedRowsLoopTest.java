@@ -119,7 +119,7 @@ public class ShadowedRowsLoopTest extends VectorTester
         prepareDataOnDisk();
 
         // delete some, don't flush
-        for (int i = liveVectorsNum - vectorCount / 2; i < liveVectorsNum + vectorCount / 2; i += 2)
+        for (int i = liveVectorsNum; i < liveVectorsNum + vectorCount / 2; i += 2)
         {
             execute("DELETE FROM %s WHERE pk = ?", i);
         }
