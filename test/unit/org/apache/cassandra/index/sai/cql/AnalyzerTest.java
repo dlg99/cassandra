@@ -38,19 +38,29 @@ public class AnalyzerTest extends VectorTester
     public void createAnalyzerWrongTypeTest()
     {
         createTable("CREATE TABLE %s (pk1 int, pk2 text, val int, val2 int, PRIMARY KEY((pk1, pk2)))");
+        createIndex("CREATE CUSTOM INDEX ON %s(pk1) USING 'StorageAttachedIndex'");
+        createIndex("CREATE CUSTOM INDEX ON %s(pk2) USING 'StorageAttachedIndex'");
+        waitForIndexQueryable();
 
         execute("INSERT INTO %s (pk1, pk2, val) VALUES (-1, 'b', 1)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (0, 'b', 2)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (1, 'b', 3)");
+
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (-1, 'a', -1)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (0, 'a', -2)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (1, 'a', -3)");
+
         flush();
 
-        try
-        {
-            createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {'index_analyzer': 'standard'};");
-            fail("expected esception");
-        }
-        catch (InvalidRequestException ie)
-        {
-            // expected
-            assertEquals("CQL type int cannot be analyzed.", ie.getMessage());
-        }
+        createIndex("CREATE CUSTOM INDEX ON %s(val) USING 'StorageAttachedIndex' WITH OPTIONS = {'index_analyzer': 'standard'};");
+        waitForIndexQueryable();
+
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (-1, 'd', 1)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (0, 'd', 2)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (1, 'd', 3)");
+
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (-1, 'c', -1)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (0, 'c', -2)");
+        execute("INSERT INTO %s (pk1, pk2, val) VALUES (1, 'c', -3)");
     }
 }

@@ -118,7 +118,8 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
     {
         if (!TypeUtil.isIn(type, ANALYZABLE_TYPES))
         {
-            throw new InvalidRequestException("CQL type " + type.asCQL3Type() + " cannot be analyzed.");
+            logger.warn("CQL type {} cannot be analyzed options={}; using NoOpAnalyzer", type.asCQL3Type(), options);
+            return NoOpAnalyzer::new;
         }
 
         try
