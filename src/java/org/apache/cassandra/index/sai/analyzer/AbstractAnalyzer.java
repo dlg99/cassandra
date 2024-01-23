@@ -116,6 +116,11 @@ public abstract class AbstractAnalyzer implements Iterator<ByteBuffer>
 
     public static AnalyzerFactory toAnalyzerFactory(String json, final AbstractType<?> type, final Map<String, String> options) //throws Exception
     {
+        if (!TypeUtil.isIn(type, ANALYZABLE_TYPES))
+        {
+            throw new InvalidRequestException("CQL type " + type.asCQL3Type() + " cannot be analyzed.");
+        }
+
         try
         {
             final Analyzer analyzer = JSONAnalyzerParser.parse(json);
