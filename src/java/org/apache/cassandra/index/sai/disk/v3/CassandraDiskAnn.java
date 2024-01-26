@@ -75,8 +75,9 @@ public class CassandraDiskAnn extends JVectorLuceneOnDiskGraph
         graphHandle = indexFiles.termsData();
         var graphIndex = new OnDiskGraphIndex<float[]>(graphHandle::createReader, termsMetadata.offset);
 
-        // try to reduce cache distance from default 3 to reduce memory usage
-        int distance = Math.min(logBaseX(graphIndex.size(), graphIndex.maxDegree()), 3);
+        // try to reduce cache distance from default 3 to reduce memory usage.
+        // let's have astra target 1% of the vectors
+        int distance = Math.min(logBaseX(0.01d * graphIndex.size(), graphIndex.maxDegree()), 3);
 
         if (distance < 3 && logger.isDebugEnabled())
             logger.debug("Reducing cache distance from 3 to {} for {}", distance, graphHandle.path());
@@ -103,7 +104,7 @@ public class CassandraDiskAnn extends JVectorLuceneOnDiskGraph
     }
 
     private static int logBaseX(double val, double base) {
-        if (base <= 1 || val <= 1)
+        if (base <= 1.0d || val <= 1.0d)
             return 0;
         return (int)Math.floor(Math.log(val) / Math.log(base));
     }
