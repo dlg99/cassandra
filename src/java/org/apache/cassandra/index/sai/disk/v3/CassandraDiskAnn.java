@@ -71,7 +71,8 @@ public class CassandraDiskAnn extends JVectorLuceneOnDiskGraph
 
         SegmentMetadata.ComponentMetadata termsMetadata = getComponentMetadata(IndexComponent.TERMS_DATA);
         graphHandle = indexFiles.termsData();
-        graph = new CachingGraphIndex(new OnDiskGraphIndex<>(graphHandle::createReader, termsMetadata.offset));
+        // cache distance 2 instead of default 3 to reduce memory usage
+        graph = new CachingGraphIndex(new OnDiskGraphIndex<>(graphHandle::createReader, termsMetadata.offset), 2);
         view = ThreadLocal.withInitial(graph::getView);
 
         long pqSegmentOffset = getComponentMetadata(IndexComponent.PQ).offset;
