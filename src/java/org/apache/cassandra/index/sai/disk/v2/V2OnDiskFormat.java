@@ -34,6 +34,7 @@ import org.apache.cassandra.index.sai.disk.PrimaryKeyMap;
 import org.apache.cassandra.index.sai.disk.format.IndexComponent;
 import org.apache.cassandra.index.sai.disk.format.IndexDescriptor;
 import org.apache.cassandra.index.sai.disk.format.IndexFeatureSet;
+import org.apache.cassandra.index.sai.disk.format.Version;
 import org.apache.cassandra.index.sai.disk.v1.IndexSearcher;
 import org.apache.cassandra.index.sai.disk.v1.PerIndexFiles;
 import org.apache.cassandra.index.sai.disk.v1.SegmentMetadata;
@@ -127,7 +128,7 @@ public class V2OnDiskFormat extends V1OnDiskFormat
                 if (checksum)
                     SAICodecUtils.validateChecksum(input);
                 else
-                    SAICodecUtils.validate(input);
+                    SAICodecUtils.validate(input, Version.BA);
             }
             catch (Throwable e)
             {
