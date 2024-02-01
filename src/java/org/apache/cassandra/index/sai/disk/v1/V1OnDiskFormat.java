@@ -213,10 +213,15 @@ public class V1OnDiskFormat implements OnDiskFormat
 
             try (IndexInput input = indexDescriptor.openPerSSTableInput(indexComponent))
             {
+                assert Version.LATEST.onOrAfter(Version.VECTOR_EARLIEST)
+                    : "Configured latest version "
+                      + Version.LATEST
+                      + "of index should be greater or equal to vector's earliest supported version "
+                      + Version.VECTOR_EARLIEST;
                 if (checksum)
                     SAICodecUtils.validateChecksum(input);
                 else
-                    SAICodecUtils.validate(input, Version.BA);
+                    SAICodecUtils.validate(input, Version.VECTOR_EARLIEST);
             }
             catch (Throwable e)
             {
