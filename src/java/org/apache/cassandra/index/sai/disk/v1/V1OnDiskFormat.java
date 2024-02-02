@@ -239,11 +239,8 @@ public class V1OnDiskFormat implements OnDiskFormat
         Version earliest = Version.EARLIEST;
         if (isVectorDataComponent(indexComponent))
         {
-            assert Version.LATEST.onOrAfter(Version.VECTOR_EARLIEST)
-            : "Configured latest version "
-              + Version.LATEST
-              + "of index should be greater or equal to vector's earliest supported version "
-              + Version.VECTOR_EARLIEST;
+            if (!Version.LATEST.onOrAfter(Version.VECTOR_EARLIEST))
+                throw new IllegalStateException("Configured latest version " + Version.LATEST + " is not compatible with vector index");
             earliest = Version.VECTOR_EARLIEST;
         }
         return earliest;
