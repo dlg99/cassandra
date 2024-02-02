@@ -123,17 +123,14 @@ public class V2OnDiskFormat extends V1OnDiskFormat
         {
             if (isBuildCompletionMarker(indexComponent))
                 continue;
+
             try (IndexInput input = indexDescriptor.openPerSSTableInput(indexComponent))
             {
-                assert Version.LATEST.onOrAfter(Version.VECTOR_EARLIEST)
-                    : "Configured latest version "
-                      + Version.LATEST
-                      + "of index should be greater or equal to vector's earliest supported version "
-                      + Version.VECTOR_EARLIEST;
+                Version earliest = getExpectedEarliestVersion(indexComponent);
                 if (checksum)
                     SAICodecUtils.validateChecksum(input);
                 else
-                    SAICodecUtils.validate(input, Version.VECTOR_EARLIEST);
+                    SAICodecUtils.validate(input, earliest);
             }
             catch (Throwable e)
             {
