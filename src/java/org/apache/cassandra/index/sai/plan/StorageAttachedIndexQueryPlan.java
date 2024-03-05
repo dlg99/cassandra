@@ -62,7 +62,8 @@ public class StorageAttachedIndexQueryPlan implements Index.QueryPlan
         this.filterOperation = filterOperation;
         this.indexes = indexes;
         this.indexFeatureSet = indexFeatureSet;
-        this.isTopK = filterOperation.expressions().stream().anyMatch(p -> p.operator() == Operator.ANN);
+        this.isTopK = filterOperation.expressions().stream()
+                                     .anyMatch(p -> p.operator() == Operator.ANN || p.operator() == Operator.SAI);
     }
 
     @Nullable
@@ -145,6 +146,10 @@ public class StorageAttachedIndexQueryPlan implements Index.QueryPlan
     public Function<PartitionIterator, PartitionIterator> postProcessor(ReadCommand command)
     {
         if (!isTopK())
+            return partitions -> partitions;
+
+        var saiCount = command.rowFilter().getExpressions().stream().filter(e -> e.operator() == Operator.SAI).count();
+        if (isTopK() && saiCount == 1)
             return partitions -> partitions;
 
         // in case of top-k query, filter out rows that are not actually global top-K

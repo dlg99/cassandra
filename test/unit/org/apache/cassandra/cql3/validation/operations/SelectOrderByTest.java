@@ -17,6 +17,8 @@
  */
 package org.apache.cassandra.cql3.validation.operations;
 
+import java.util.stream.Collectors;
+
 import org.junit.Test;
 
 import org.apache.cassandra.cql3.CQLTester;
@@ -26,6 +28,53 @@ import static org.junit.Assert.assertTrue;
 
 public class SelectOrderByTest extends CQLTester
 {
+
+    @Test
+    public void testSelectAndOrder2ndaryIndex() throws Throwable
+    {
+        createTable("CREATE TABLE %s (id int, a int, b int, c int, d int, PRIMARY KEY (a, id))");
+        createIndex("CREATE CUSTOM INDEX d_idx ON %s(d) USING 'StorageAttachedIndex'");
+
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 3, 0, 1, 0, 2);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 4, 0, 1, 1, 1);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 0, 0, 1, 2, 0);
+
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 0, 0, 0, 0, 5);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 1, 0, 0, 1, 4);
+        execute("INSERT INTO %s (id, a, b, c, d) VALUES (?, ?, ?, ?, ?)", 2, 0, 0, 2, 3);
+
+        //flush();
+
+        //var res = execute("SELECT d FROM %s WHERE a=? ORDER BY a ASC LIMIT 5", 0);
+//        var res = execute("SELECT d FROM %s WHERE a=? ORDER BY d ASC LIMIT 10", 0);
+//        logger.warn("res: len = {},  {}", res.size(), res.stream().collect(Collectors.toList()));
+//        assertTrue(res.toString(), res.size() > 0);
+//
+//        assertRows(res, row(0), row(1), row(2), row(3), row(4));
+
+//        var res = execute("SELECT d FROM %s WHERE a=? ORDER BY d DESC LIMIT 10", 0);
+//        logger.warn("res: len = {},  {}", res.size(), res.stream().collect(Collectors.toList()));
+//        assertTrue(res.toString(), res.size() > 0);
+//
+//        assertRowsIgnoringOrder(res, row(0), row(4), row(3), row(2), row(1));
+//        assertRows(res, row(0), row(1), row(2), row(3), row(4));
+
+        var res = execute("SELECT d FROM %s WHERE a=? ORDER BY d ASC LIMIT 3", 0);
+        logger.warn("res: len = {},  {}", res.size(), res.stream().collect(Collectors.toList()));
+        assertTrue(res.toString(), res.size() > 0);
+
+        assertRowsIgnoringOrder(res, row(0), row(1), row(2));
+        assertRows(res, row(0), row(1), row(2));
+
+        res = execute("SELECT d FROM %s WHERE a=? ORDER BY d DESC LIMIT 3", 0);
+        logger.warn("res: len = {},  {}", res.size(), res.stream().collect(Collectors.toList()));
+        assertTrue(res.toString(), res.size() > 0);
+
+        assertRowsIgnoringOrder(res, row(5), row(4), row(3));
+        assertRows(res, row(5), row(4), row(3));
+
+    }
+
     @Test
     public void testNormalSelectionOrderSingleClustering() throws Throwable
     {

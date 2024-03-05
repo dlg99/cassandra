@@ -971,6 +971,13 @@ public abstract class RowFilter implements Iterable<RowFilter.Expression>
                         // Note that CQL expression are always of the form 'x < 4', i.e. the tested value is on the left.
                         return foundValue != null && operator.isSatisfiedBy(column.type, foundValue, value);
                     }
+                case SAI:
+                {
+                    assert !column.isComplex() : "Only CONTAINS and CONTAINS_KEY are supported for 'complex' types";
+                    ByteBuffer foundValue = getValue(metadata, partitionKey, row);
+                    // Note that CQL expression are always of the form 'x < 4', i.e. the tested value is on the left.
+                    return foundValue != null; // && operator.isSatisfiedBy(column.type, foundValue, value);
+                }
                 case CONTAINS:
                     return contains(metadata, partitionKey, row);
                 case CONTAINS_KEY:

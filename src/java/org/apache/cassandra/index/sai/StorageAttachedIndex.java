@@ -599,7 +599,26 @@ public class StorageAttachedIndex implements Index
     @Override
     public void postQuerySort(ResultSet cqlRows, Restriction restriction, int columnIndex, QueryOptions options)
     {
-        // For now, only support ANN
+        if (restriction instanceof SingleColumnRestriction.AnnRestriction)
+            pqSortAnn(cqlRows, restriction, columnIndex, options);
+        else if (restriction instanceof SingleColumnRestriction.SaiRestriction)
+            pqSortSai(cqlRows, restriction, columnIndex);
+        else
+            throw new UnsupportedOperationException("Unsupported restriction type: " + restriction.getClass().getName());
+    }
+
+    private void pqSortSai(ResultSet cqlRows, Restriction restriction, int columnIndex)
+    {
+        assert restriction instanceof SingleColumnRestriction.SaiRestriction;
+        SingleColumnRestriction.SaiRestriction r = (SingleColumnRestriction.SaiRestriction) restriction;
+
+        var rowType = r.isReversed() ? indexContext.getDefinition().type.reversed() : indexContext.getDefinition().type;
+
+        cqlRows.rows.sort(Comparator.comparing(row -> row.get(columnIndex), rowType));
+    }
+
+    private void pqSortAnn(ResultSet cqlRows, Restriction restriction, int columnIndex, QueryOptions options)
+    {
         assert restriction instanceof SingleColumnRestriction.AnnRestriction;
 
         Preconditions.checkState(indexContext.isVector());

@@ -18,6 +18,7 @@
 
 package org.apache.cassandra.index.sai.utils;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.SortedSet;
 
@@ -37,7 +38,7 @@ public class CollectionRangeIterator extends RangeIterator
      * @param maximumKey the maximum key for the provided list of keys
      * @param keys the list of keys to iterate over
      */
-    public CollectionRangeIterator(PrimaryKey minimumKey, PrimaryKey maximumKey, List<PrimaryKey> keys)
+    public CollectionRangeIterator(PrimaryKey minimumKey, PrimaryKey maximumKey, Collection<PrimaryKey> keys)
     {
         super(minimumKey, maximumKey, keys.size());
         this.keyQueue = Iterators.peekingIterator(keys.iterator());

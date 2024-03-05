@@ -452,7 +452,22 @@ public class IndexContext
         return result;
     }
 
-    private RangeIterator scanMemtable(AbstractBounds<PartitionPosition> keyRange)
+    public List<CloseableIterator<ScoredPrimaryKey>> orderMemtableBySai(QueryContext context, Expression e, AbstractBounds<PartitionPosition> keyRange, int limit)
+    {
+        Collection<MemtableIndex> memtables = liveMemtables.values();
+
+        if (memtables.isEmpty())
+            return List.of();
+
+        var result = new ArrayList<CloseableIterator<ScoredPrimaryKey>>(memtables.size());
+
+        for (MemtableIndex index : memtables)
+            result.add(index.orderBySai(context, e, keyRange, limit));
+
+        return result;
+    }
+
+    public RangeIterator scanMemtable(AbstractBounds<PartitionPosition> keyRange)
     {
         Collection<Memtable> memtables = liveMemtables.keySet();
         if (memtables.isEmpty())

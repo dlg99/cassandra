@@ -22,10 +22,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -52,8 +54,10 @@ import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ClusteringIndexNamesFilter;
 import org.apache.cassandra.db.filter.DataLimits;
 import org.apache.cassandra.db.filter.RowFilter;
+import org.apache.cassandra.db.marshal.datetime.DateRange;
 import org.apache.cassandra.db.memtable.Memtable;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.db.rows.UnfilteredRowIterators;
 import org.apache.cassandra.dht.AbstractBounds;
 import org.apache.cassandra.dht.Bounds;
 import org.apache.cassandra.dht.Range;
@@ -62,8 +66,11 @@ import org.apache.cassandra.index.sai.QueryContext;
 import org.apache.cassandra.index.sai.SSTableIndex;
 import org.apache.cassandra.index.sai.StorageAttachedIndex;
 import org.apache.cassandra.index.sai.disk.format.IndexFeatureSet;
+import org.apache.cassandra.index.sai.disk.vector.VectorMemtableIndex;
+import org.apache.cassandra.index.sai.memory.MemtableIndex;
 import org.apache.cassandra.index.sai.metrics.TableQueryMetrics;
 import org.apache.cassandra.index.sai.utils.AbortedOperationException;
+import org.apache.cassandra.index.sai.utils.CollectionRangeIterator;
 import org.apache.cassandra.index.sai.utils.OrderingFilterRangeIterator;
 import org.apache.cassandra.index.sai.utils.PrimaryKey;
 import org.apache.cassandra.index.sai.utils.RangeIntersectionIterator;
@@ -83,6 +90,7 @@ import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.Throwables;
 import org.apache.cassandra.utils.concurrent.Ref;
+import org.assertj.core.util.Streams;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.SAI_VECTOR_SEARCH_ORDER_CHUNK_SIZE;
 
@@ -259,9 +267,23 @@ public class QueryController
 
     public RangeIterator buildIterator()
     {
+        var saiOrderingExpressions = filterOperation.expressions().stream()
+                                                    .filter(e -> e.operator() == Operator.SAI)
+                                                    .collect(Collectors.toList());
+        if (saiOrderingExpressions.size() == 1)
+        {
+            var filterOperation = filterOperation();
+            if (filterOperation.expressions().size() == 1 && filterOperation.children().isEmpty())
+                return getTopKSaiRows(saiOrderingExpressions.get(0));
+        } else if (saiOrderingExpressions.size() > 1)
+        {
+            throw new UnsupportedOperationException("Multiple SAI expressions are not supported");
+        }
+
         // VSTODO we can clean this up when we break ordering out
         var nonOrderingExpressions = filterOperation.expressions().stream()
                                                     .filter(e -> e.operator() != Operator.ANN)
+                                                    .filter(e -> e.operator() != Operator.SAI)
                                                     .collect(Collectors.toList());
         if (nonOrderingExpressions.isEmpty() && filterOperation.children().isEmpty())
             return RangeIterator.empty();
@@ -411,6 +433,61 @@ public class QueryController
             throw t;
         }
         return builder.build();
+    }
+
+    private RangeIterator orderTopK(RangeIterator iter, int limit)
+    {
+        PriorityQueue<PrimaryKey> keyQueue = new PriorityQueue<>(limit + 1, Comparator.naturalOrder());
+
+        try
+        {
+            while (iter.hasNext())
+            {
+                var next = iter.next();
+                keyQueue.add(next);
+                if (keyQueue.size() > limit)
+                    keyQueue.poll();
+            }
+        }
+        finally
+        {
+            FileUtils.closeQuietly(iter);
+        }
+
+        if (keyQueue.isEmpty())
+            return RangeIterator.empty();
+        return new CollectionRangeIterator(firstPrimaryKey, lastPrimaryKey, keyQueue);
+    }
+
+
+    // SAI order query
+    private CloseableIterator<ScoredPrimaryKey> getTopKSaiRows(RowFilter.Expression expression)
+    {
+        assert expression.operator() == Operator.SAI;
+        var planExpression = new Expression(getContext(expression))
+                             .add(Operator.SAI, expression.getIndexValue().duplicate());
+
+        // search memtable before referencing sstable indexes; otherwise we may miss newly flushed memtable index
+        var memtableResults = getContext(expression).orderMemtableBySai(queryContext, planExpression, mergeRange, limit);
+
+        var queryView = new QueryViewBuilder(Collections.singleton(planExpression), mergeRange).build();
+
+        try
+        {
+            var sstableResults = queryView.view.values()
+                                               .stream()
+                                               .flatMap(e -> orderBy(e, limit).stream())
+                                               .collect(Collectors.toList());
+            sstableResults.addAll(memtableResults);
+            return new MergeScoredPrimaryKeyIterator(sstableResults, queryView.referencedIndexes);
+        }
+        catch (Throwable t)
+        {
+            // all sstable indexes in view have been referenced, need to clean up when exception is thrown
+            queryView.referencedIndexes.forEach(SSTableIndex::release);
+            throw t;
+        }
+
     }
 
     // This is an ANN only query

@@ -34,6 +34,7 @@ import com.google.common.collect.Iterators;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
@@ -122,9 +123,25 @@ public class StorageAttachedIndexSearcher implements Index.Searcher
         if (!command.isTopK())
             return new ResultRetriever(analyze(), analyzeFilter(), controller, executionController, queryContext);
 
-        var result = new ScoreOrderedResultRetriever(buildScoredPrimaryKeyIterator(), analyzeFilter(), controller,
-                                                     executionController, queryContext);
-        return (UnfilteredPartitionIterator) new VectorTopKProcessor(command).filter(result);
+        var orderings = controller.filterOperation().expressions().stream()
+                                  .filter(e -> e.operator() == Operator.ANN || e.operator() == Operator.SAI)
+                                  .collect(Collectors.toList());
+
+        assert orderings.size() == 1 : "TopK queries must have exactly one ordering expression";
+        var op = orderings.get(0).operator();
+
+        if (op == Operator.ANN)
+        {
+            var result = new ScoreOrderedResultRetriever(buildScoredPrimaryKeyIterator(), analyzeFilter(), controller,
+                                                         executionController, queryContext);
+            return (UnfilteredPartitionIterator) new VectorTopKProcessor(command).filter(result);
+        } else if (op == Operator.SAI)
+        {
+            return new ResultRetriever(analyze(), analyzeFilter(), controller, executionController, queryContext);
+        } else
+        {
+            throw new AssertionError("Unexpected operator: " + op);
+        }
     }
 
     /**

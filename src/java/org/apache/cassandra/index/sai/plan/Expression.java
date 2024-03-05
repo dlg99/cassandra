@@ -58,7 +58,7 @@ public class Expression
         EQ, MATCH, PREFIX, NOT_EQ, RANGE,
         CONTAINS_KEY, CONTAINS_VALUE,
         NOT_CONTAINS_VALUE, NOT_CONTAINS_KEY,
-        IN, ANN, BOUNDED_ANN;
+        IN, ANN, BOUNDED_ANN, SAI;
 
         public static Op valueOf(Operator operator)
         {
@@ -69,6 +69,9 @@ public class Expression
 
                 case NEQ:
                     return NOT_EQ;
+
+                case SAI:
+                    return SAI;
 
                 case CONTAINS:
                     return CONTAINS_VALUE; // non-frozen map: value contains term;
@@ -171,6 +174,7 @@ public class Expression
             case LIKE_MATCHES:
             case ANALYZER_MATCHES:
             case EQ:
+            case SAI:
             case CONTAINS:
             case CONTAINS_KEY:
             case NOT_CONTAINS:
@@ -258,6 +262,9 @@ public class Expression
 
         // ANN accepts all results
         if (operation == Op.ANN)
+            return true;
+
+        if (operation == Op.SAI)
             return true;
 
         if (!TypeUtil.isValid(columnValue, validator))
