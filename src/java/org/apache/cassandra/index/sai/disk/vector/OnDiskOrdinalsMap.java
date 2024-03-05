@@ -265,7 +265,6 @@ public class OnDiskOrdinalsMap
             }
             final AtomicLong lastRowIdIndex = new AtomicLong(-1L);
             // Compute the offset of the start of the rowId to vectorOrdinal mapping
-            // TODO: searchInt appears to be boxing in Function<>, which is not ideal
             long index = DiskBinarySearch.searchInt(low, high, rowId, i -> {
                 try
                 {
