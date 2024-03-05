@@ -47,7 +47,9 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.io.util.SequentialWriterOption;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 
@@ -78,13 +80,15 @@ public class OnDiskOrdinalsMapTest
     private boolean createOdomAndGetRowIdsMatchOrdinals(HashBiMap<Integer, Integer> ordinalsMap) throws Exception
     {
         File tempFile = temp("testfile");
+        tempFile.deleteOnExit();
 
         var deletedOrdinals = new HashSet<Integer>();
         RamAwareVectorValues vectorValues = generateVectors(10);
 
         var postingsMap = generatePostingsMap(vectorValues);
 
-        for (var p: postingsMap.entrySet()) {
+        for (var p: postingsMap.entrySet())
+        {
             p.getValue().computeRowIds(x -> x);
         }
 
@@ -106,6 +110,21 @@ public class OnDiskOrdinalsMapTest
              FileHandle fileHandle = builder.complete())
         {
             OnDiskOrdinalsMap odom = new OnDiskOrdinalsMap(fileHandle, postingsOffset, postingsLength);
+
+            try (var ordinalsView = odom.getOrdinalsView())
+            {
+                for (var p: postingsMap.entrySet())
+                {
+                    for (int rowId: p.getValue().getRowIds())
+                    {
+                        int ordinal = ordinalsView.getOrdinalForRowId(rowId);
+                        assertNotEquals(-1, ordinal);
+                    }
+                    int ordinal = ordinalsView.getOrdinalForRowId(Integer.MAX_VALUE);
+                    assertEquals(-1, ordinal);
+                }
+            }
+
             boolean rowIdsMatchOrdinals = (boolean) FieldUtils.readField(odom, "rowIdsMatchOrdinals", true);
             odom.close();
             return rowIdsMatchOrdinals;

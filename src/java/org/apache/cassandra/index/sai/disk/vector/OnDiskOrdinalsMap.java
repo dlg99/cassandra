@@ -24,6 +24,8 @@ import java.util.HashSet;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -231,6 +233,8 @@ public class OnDiskOrdinalsMap
     {
         RandomAccessReader reader = fh.createReader();
         private final long high = (segmentEnd - 8 - rowOrdinalOffset) / 8;
+        private final AtomicInteger lastFoundRowId = new AtomicInteger(-1);
+        private final AtomicLong lastFoundRowIdIndex = new AtomicLong(-1);
 
         /**
          * @return order if given row id is found; otherwise return -1
@@ -238,10 +242,34 @@ public class OnDiskOrdinalsMap
         @Override
         public int getOrdinalForRowId(int rowId) throws IOException
         {
+            long low = 0;
+            if (lastFoundRowId.get() > -1 && lastFoundRowId.get() <= rowId)
+            {
+                low = lastFoundRowIdIndex.get();
+
+                // sequential read, skip binary search
+                if (low + 1 == rowId)
+                {
+                    long offset = rowOrdinalOffset + (lastFoundRowIdIndex.get() + 1) * 8;
+                    reader.seek(offset);
+                    int foundRowId = reader.readInt();
+                    if (foundRowId == rowId)
+                    {
+                        lastFoundRowId.incrementAndGet();
+                        lastFoundRowIdIndex.incrementAndGet();
+                        return reader.readInt();
+                    }
+                    else
+                        return -1;
+                }
+            }
+            final AtomicLong lastRowIdIndex = new AtomicLong(-1L);
             // Compute the offset of the start of the rowId to vectorOrdinal mapping
-            long index = DiskBinarySearch.searchInt(0, Math.toIntExact(high), rowId, i -> {
+            // TODO: searchInt appears to be boxing in Function<>, which is not ideal
+            long index = DiskBinarySearch.searchInt(low, high, rowId, i -> {
                 try
                 {
+                    lastRowIdIndex.set(i);
                     long offset = rowOrdinalOffset + i * 8;
                     reader.seek(offset);
                     return reader.readInt();
@@ -256,6 +284,8 @@ public class OnDiskOrdinalsMap
             if (index < 0)
                 return -1;
 
+            lastFoundRowId.set(rowId);
+            lastFoundRowIdIndex.set(lastRowIdIndex.get());
             return reader.readInt();
         }
 
