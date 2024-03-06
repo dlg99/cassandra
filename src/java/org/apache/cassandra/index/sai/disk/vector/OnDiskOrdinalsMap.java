@@ -229,12 +229,15 @@ public class OnDiskOrdinalsMap
         }
     }
 
+    /**
+     * not thread safe
+     */
     private class FileReadingOrdinalsView implements OrdinalsView
     {
         RandomAccessReader reader = fh.createReader();
         private final long high = (segmentEnd - 8 - rowOrdinalOffset) / 8;
-        private final AtomicInteger lastFoundRowId = new AtomicInteger(-1);
-        private final AtomicLong lastFoundRowIdIndex = new AtomicLong(-1);
+        private int lastFoundRowId = -1;
+        private long lastFoundRowIdIndex = -1;
 
         /**
          * @return order if given row id is found; otherwise return -1
@@ -242,21 +245,31 @@ public class OnDiskOrdinalsMap
         @Override
         public int getOrdinalForRowId(int rowId) throws IOException
         {
-            long low = 0;
-            if (lastFoundRowId.get() > -1 && lastFoundRowId.get() <= rowId)
-            {
-                low = lastFoundRowIdIndex.get();
+            if (rowId <= lastFoundRowId)
+                logger.warn("repeated read for rowId {}, last found rowid: {}", rowId, lastFoundRowId);
 
-                // sequential read, skip binary search
-                if (low + 1 == rowId)
+            long low = 0;
+            if (lastFoundRowId > -1 && lastFoundRowId <= rowId && lastFoundRowIdIndex < high)
+            {
+                low = lastFoundRowIdIndex;
+
+                if (low == rowId) //repeated read, not really expected
                 {
-                    long offset = rowOrdinalOffset + (lastFoundRowIdIndex.get() + 1) * 8;
+                    long offset = rowOrdinalOffset + lastFoundRowIdIndex * 8;
+                    reader.seek(offset);
+                    int foundRowId = reader.readInt();
+                    assert foundRowId == rowId : "expected rowId " + rowId + " but found " + foundRowId;
+                    return reader.readInt();
+                }
+                else if (low + 1 == rowId) // sequential read, skip binary search
+                {
+                    long offset = rowOrdinalOffset + (lastFoundRowIdIndex + 1) * 8;
                     reader.seek(offset);
                     int foundRowId = reader.readInt();
                     if (foundRowId == rowId)
                     {
-                        lastFoundRowId.incrementAndGet();
-                        lastFoundRowIdIndex.incrementAndGet();
+                        lastFoundRowId++;
+                        lastFoundRowIdIndex++;
                         return reader.readInt();
                     }
                     else
@@ -283,8 +296,8 @@ public class OnDiskOrdinalsMap
             if (index < 0)
                 return -1;
 
-            lastFoundRowId.set(rowId);
-            lastFoundRowIdIndex.set(lastRowIdIndex.get());
+            lastFoundRowId = rowId;
+            lastFoundRowIdIndex = lastRowIdIndex.get();
             return reader.readInt();
         }
 
