@@ -274,9 +274,9 @@ public class OnDiskOrdinalsMap
         public void forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
         {
             reader.seek(rowOrdinalOffset);
-            // sequential read without seeks should be fast, we sxpect OS to prefetch data from the disk
+            // sequential read without seeks should be fast, we expect OS to prefetch data from the disk
             // binary search for starting offset of min rowid >= startRowId unlikely to be faster
-            for (long idx = 0; idx <= high; idx ++)
+            for (long idx = 0; idx < high; idx ++)
             {
                 int rowId = reader.readInt();
                 if (rowId > endRowId)
