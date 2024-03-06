@@ -125,6 +125,10 @@ public class OnDiskOrdinalsMapTest
                             // check skipped row
                             int ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
                             assertEquals(-1, ordinal);
+
+                            // repeat last read row
+                            ordinal = ordinalsView.getOrdinalForRowId(lastRowId);
+                            assertNotEquals(-1, ordinal);
                         }
 
                         lastRowId = rowId;
