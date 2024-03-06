@@ -22,7 +22,14 @@ import java.io.IOException;
 
 public interface OrdinalsView extends AutoCloseable
 {
+    interface OrdinalConsumer
+    {
+        void accept(long rowId, int ordinal) throws IOException;
+    }
+
     int getOrdinalForRowId(int rowId) throws IOException;
+
+    void forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException;
 
     @Override
     void close();

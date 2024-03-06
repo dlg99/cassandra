@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.base.MoreObjects;
 import org.slf4j.Logger;
@@ -225,19 +226,15 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
             // create a bitset of ordinals corresponding to the rows in the given key range
             SparseFixedBitSet bits = bitSetForSearch();
-            boolean hasMatches = false;
+            final AtomicBoolean hasMatches = new AtomicBoolean(false);
             try (var ordinalsView = graph.getOrdinalsView())
             {
-                for (long sstableRowId = minSSTableRowId; sstableRowId <= maxSSTableRowId; sstableRowId++)
-                {
-                    int segmentRowId = metadata.toSegmentRowId(sstableRowId);
-                    int ordinal = ordinalsView.getOrdinalForRowId(segmentRowId);
-                    if (ordinal >= 0)
-                    {
-                        bits.set(ordinal);
-                        hasMatches = true;
-                    }
-                }
+                int startSegmentRowId = metadata.toSegmentRowId(minSSTableRowId);
+                int endSegmentRowId = metadata.toSegmentRowId(maxSSTableRowId);
+                ordinalsView.forEachOrdinalInRange(startSegmentRowId, endSegmentRowId, (segmentRowId, ordinal) -> {
+                    bits.set(ordinal);
+                    hasMatches.set(true);
+                });
             }
             catch (IOException e)
             {
@@ -246,7 +243,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             // We can make a more accurate cost estimate now
             var betterCostEstimate = estimateCost(topK, bits.cardinality());
 
-            if (!hasMatches)
+            if (!hasMatches.get())
                 return CloseableIterator.emptyIterator();
 
             return graph.search(queryVector, topK, threshold, bits, context, visited -> {
