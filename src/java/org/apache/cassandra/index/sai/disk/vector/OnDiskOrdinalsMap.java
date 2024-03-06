@@ -277,10 +277,27 @@ public class OnDiskOrdinalsMap
         public boolean forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
         {
             boolean called = false;
-            reader.seek(rowOrdinalOffset);
+
+            long start = DiskBinarySearch.searchFloor(0, high, startRowId, i -> {
+                try
+                {
+                    long offset = rowOrdinalOffset + i * 8;
+                    reader.seek(offset);
+                    return reader.readInt();
+                }
+                catch (IOException e)
+                {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            if (start < 0 || start >= high)
+                return false;
+
+            reader.seek(rowOrdinalOffset + start * 8);
             // sequential read without seeks should be fast, we expect OS to prefetch data from the disk
             // binary search for starting offset of min rowid >= startRowId unlikely to be faster
-            for (long idx = 0; idx < high; idx ++)
+            for (long idx = start; idx < high; idx ++)
             {
                 int rowId = reader.readInt();
                 if (rowId > endRowId)
