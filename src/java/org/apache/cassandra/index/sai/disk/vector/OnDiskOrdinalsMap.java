@@ -221,14 +221,17 @@ public class OnDiskOrdinalsMap
         }
 
         @Override
-        public void forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
+        public boolean forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
         {
+            boolean called = false;
             int start = Math.max(startRowId, 0);
             int end = Math.min(endRowId, size);
             for (int rowId = start; rowId < end; rowId++)
             {
+                called = true;
                 consumer.accept(rowId, rowId);
             }
+            return called;
         }
 
         @Override
@@ -271,8 +274,9 @@ public class OnDiskOrdinalsMap
         }
 
         @Override
-        public void forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
+        public boolean forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException
         {
+            boolean called = false;
             reader.seek(rowOrdinalOffset);
             // sequential read without seeks should be fast, we expect OS to prefetch data from the disk
             // binary search for starting offset of min rowid >= startRowId unlikely to be faster
@@ -285,9 +289,11 @@ public class OnDiskOrdinalsMap
                 int ordinal = reader.readInt();
                 if (rowId >= startRowId)
                 {
+                    called = true;
                     consumer.accept(rowId, ordinal);
                 }
             }
+            return called;
         }
 
         @Override

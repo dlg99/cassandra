@@ -226,14 +226,13 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
 
             // create a bitset of ordinals corresponding to the rows in the given key range
             SparseFixedBitSet bits = bitSetForSearch();
-            final AtomicBoolean hasMatches = new AtomicBoolean(false);
+            final boolean hasMatches;
             try (var ordinalsView = graph.getOrdinalsView())
             {
                 int startSegmentRowId = metadata.toSegmentRowId(minSSTableRowId);
                 int endSegmentRowId = metadata.toSegmentRowId(maxSSTableRowId);
-                ordinalsView.forEachOrdinalInRange(startSegmentRowId, endSegmentRowId, (segmentRowId, ordinal) -> {
+                hasMatches = ordinalsView.forEachOrdinalInRange(startSegmentRowId, endSegmentRowId, (segmentRowId, ordinal) -> {
                     bits.set(ordinal);
-                    hasMatches.set(true);
                 });
             }
             catch (IOException e)
@@ -243,7 +242,7 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             // We can make a more accurate cost estimate now
             var betterCostEstimate = estimateCost(topK, bits.cardinality());
 
-            if (!hasMatches.get())
+            if (!hasMatches)
                 return CloseableIterator.emptyIterator();
 
             return graph.search(queryVector, topK, threshold, bits, context, visited -> {

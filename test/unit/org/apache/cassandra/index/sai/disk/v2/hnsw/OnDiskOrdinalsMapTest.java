@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntUnaryOperator;
 
 import com.google.common.collect.HashBiMap;
@@ -48,6 +49,7 @@ import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.SequentialWriter;
 import org.apache.cassandra.io.util.SequentialWriterOption;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -110,10 +112,13 @@ public class OnDiskOrdinalsMapTest
 
             try (var ordinalsView = odom.getOrdinalsView())
             {
+                final AtomicInteger count = new AtomicInteger(0);
                 ordinalsView.forEachOrdinalInRange(-100, Integer.MAX_VALUE, (rowId, ordinal) -> {
                     assertTrue(ordinal >= 0);
                     assertTrue(ordinal < vectorValues.size());
+                    count.incrementAndGet();
                 });
+                assertEquals(vectorValues.size(), count.get());
             }
 
             odom.close();

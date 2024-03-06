@@ -29,7 +29,10 @@ public interface OrdinalsView extends AutoCloseable
 
     int getOrdinalForRowId(int rowId) throws IOException;
 
-    void forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException;
+    /** iterates over all ordinals in the view.
+     * return true if consumer was called at least once.
+     * */
+    boolean forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException;
 
     @Override
     void close();
