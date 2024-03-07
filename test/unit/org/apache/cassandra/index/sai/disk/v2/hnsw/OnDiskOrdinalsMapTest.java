@@ -18,11 +18,8 @@
 
 package org.apache.cassandra.index.sai.disk.v2.hnsw;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.function.IntUnaryOperator;
@@ -33,8 +30,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.db.marshal.FloatType;
-import org.apache.cassandra.db.marshal.VectorType;
 import org.apache.cassandra.index.sai.disk.vector.ConcurrentVectorValues;
 import org.apache.cassandra.index.sai.disk.vector.OnDiskOrdinalsMap;
 import org.apache.cassandra.index.sai.disk.vector.RamAwareVectorValues;
@@ -49,7 +44,6 @@ import org.apache.cassandra.io.util.SequentialWriterOption;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 
@@ -122,18 +116,18 @@ public class OnDiskOrdinalsMapTest
                     {
                         if (rowId - 1 > lastRowId)
                         {
-                            // check skipped row
-                            int ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
-                            assertEquals(-1, ordinal);
+                            // can repeat read of the last row
+                            int ordinal = ordinalsView.getOrdinalForRowId(lastRowId);
+                            assertEquals(lastRowId, ordinal);
 
-                            // repeat last read row
-                            ordinal = ordinalsView.getOrdinalForRowId(lastRowId);
-                            assertNotEquals(-1, ordinal);
+                            // check skipped row
+                            ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
+                            assertEquals(-1, ordinal);
                         }
 
                         lastRowId = rowId;
                         int ordinal = ordinalsView.getOrdinalForRowId(rowId);
-                        assertNotEquals(-1, ordinal);
+                        assertEquals(lastRowId, ordinal);
                     }
                 }
                 int ordinal = ordinalsView.getOrdinalForRowId(Integer.MAX_VALUE);

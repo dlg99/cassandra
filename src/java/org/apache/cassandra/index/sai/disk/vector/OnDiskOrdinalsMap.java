@@ -245,15 +245,14 @@ public class OnDiskOrdinalsMap
         @Override
         public int getOrdinalForRowId(int rowId) throws IOException
         {
-            if (rowId <= lastFoundRowId)
-                logger.warn("repeated read for rowId {}, last found rowid: {}", rowId, lastFoundRowId);
+            assert rowId >= lastFoundRowId : "rowId < lastFoundRowId, rowId " + rowId + " lastFoundRowId " + lastFoundRowId + " lastFoundRowIdIndex " + lastFoundRowIdIndex + " high " + high;
 
             long low = 0;
             if (lastFoundRowId > -1 && lastFoundRowId <= rowId && lastFoundRowIdIndex < high)
             {
                 low = lastFoundRowIdIndex;
 
-                if (low == rowId) //repeated read, not really expected
+                if (lastFoundRowId == rowId) // "lastFoundRowId + 1 == rowId" case that returned -1 likely moved use here
                 {
                     long offset = rowOrdinalOffset + lastFoundRowIdIndex * 8;
                     reader.seek(offset);
@@ -261,17 +260,15 @@ public class OnDiskOrdinalsMap
                     assert foundRowId == rowId : "expected rowId " + rowId + " but found " + foundRowId;
                     return reader.readInt();
                 }
-                else if (low + 1 == rowId) // sequential read, skip binary search
+                else if (lastFoundRowId + 1 == rowId) // sequential read, skip binary search
                 {
                     long offset = rowOrdinalOffset + (lastFoundRowIdIndex + 1) * 8;
                     reader.seek(offset);
                     int foundRowId = reader.readInt();
+                    lastFoundRowId = foundRowId;
+                    lastFoundRowIdIndex++;
                     if (foundRowId == rowId)
-                    {
-                        lastFoundRowId++;
-                        lastFoundRowIdIndex++;
                         return reader.readInt();
-                    }
                     else
                         return -1;
                 }
