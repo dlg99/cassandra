@@ -131,10 +131,10 @@ public class OnDiskOrdinalsMapTest
         final boolean canFastFindRows = ordinalsMap != null;
         var postingsMap = generatePostingsMap(vectorValues);
 
-        // skip row 5 if !canFastFindRows
+        // skip rows 5 and 6 if !canFastFindRows
         for (var p: postingsMap.entrySet())
         {
-            p.getValue().computeRowIds(x -> canFastFindRows ? x : (x == 5 ? -1 : x));
+            p.getValue().computeRowIds(x -> canFastFindRows ? x : (x == 5 || x == 6 ? -1 : x));
         }
 
         PostingsMetadata postingsMd = writePostings(ordinalsMap, tempFile, vectorValues, postingsMap, deletedOrdinals);
@@ -163,14 +163,17 @@ public class OnDiskOrdinalsMapTest
                                 // expected
                             }
 
-                            // check skipped row
-                            int ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
-                            assertEquals(-1, ordinal);
+                            for (int r = lastRowId + 1; r < rowId; r++)
+                            {
+                                // check skipped rows
+                                int ordinal = ordinalsView.getOrdinalForRowId(r);
+                                assertEquals(-1, ordinal);
+                            }
                         }
 
-                        lastRowId = rowId;
                         int ordinal = ordinalsView.getOrdinalForRowId(rowId);
-                        assertEquals(lastRowId, ordinal);
+                        assertEquals(rowId, ordinal);
+                        lastRowId = rowId;
                     }
                 }
                 int ordinal = ordinalsView.getOrdinalForRowId(Integer.MAX_VALUE);

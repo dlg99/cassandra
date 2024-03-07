@@ -266,8 +266,11 @@ public class OnDiskOrdinalsMap
                 throw new IllegalArgumentException("rowId " + rowId + " is less than or equal to lastRowId " + lastRowId);
             lastRowId = rowId;
 
+            if (rowId < lastFoundRowId) // skipped row, no need to search
+                return -1;
+
             long low = 0;
-            if (lastFoundRowId > -1 && lastFoundRowId <= rowId && lastFoundRowIdIndex < high)
+            if (lastFoundRowId > -1 && lastFoundRowIdIndex < high)
             {
                 low = lastFoundRowIdIndex;
 
