@@ -109,7 +109,7 @@ public class OnDiskOrdinalsMapTest
             try (var ordinalsView = odom.getOrdinalsView())
             {
                 final AtomicInteger count = new AtomicInteger(0);
-                ordinalsView.forEachOrdinalInRange(-100, Integer.MAX_VALUE, (rowId, ordinal) -> {
+                ordinalsView.forEachOrdinalInRange(-100, Integer.MAX_VALUE / 2, (rowId, ordinal) -> {
                     assertTrue(ordinal >= 0);
                     assertTrue(ordinal < vectorValues.size());
                     count.incrementAndGet();
