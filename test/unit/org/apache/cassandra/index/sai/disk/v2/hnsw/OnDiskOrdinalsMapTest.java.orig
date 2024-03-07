@@ -18,7 +18,11 @@
 
 package org.apache.cassandra.index.sai.disk.v2.hnsw;
 
+<<<<<<< HEAD
+=======
 import java.io.IOException;
+import java.util.ArrayList;
+>>>>>>> vsearch
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
@@ -47,7 +51,6 @@ import org.apache.cassandra.io.util.SequentialWriterOption;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 
 public class OnDiskOrdinalsMapTest
@@ -124,6 +127,7 @@ public class OnDiskOrdinalsMapTest
     private boolean createOdomAndGetRowIdsMatchOrdinals(HashBiMap<Integer, Integer> ordinalsMap) throws Exception
     {
         File tempFile = temp("testfile");
+        tempFile.deleteOnExit();
 
         var deletedOrdinals = new HashSet<Integer>();
         RamAwareVectorValues vectorValues = generateVectors(10);
@@ -143,40 +147,6 @@ public class OnDiskOrdinalsMapTest
              FileHandle fileHandle = builder.complete())
         {
             OnDiskOrdinalsMap odom = new OnDiskOrdinalsMap(fileHandle, postingsMd.postingsOffset, postingsMd.postingsLength);
-
-            try (var ordinalsView = odom.getOrdinalsView())
-            {
-                int lastRowId = Integer.MAX_VALUE;
-                for (var p: postingsMap.entrySet())
-                {
-                    for (int rowId: p.getValue().getRowIds())
-                    {
-                        if (rowId - 1 > lastRowId)
-                        {
-                            try
-                            {
-                                ordinalsView.getOrdinalForRowId(lastRowId);
-                                fail("expected IllegalArgumentException when trying to repeat row");
-                            }
-                            catch (IllegalArgumentException e)
-                            {
-                                // expected
-                            }
-
-                            // check skipped row
-                            int ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
-                            assertEquals(-1, ordinal);
-                        }
-
-                        lastRowId = rowId;
-                        int ordinal = ordinalsView.getOrdinalForRowId(rowId);
-                        assertEquals(lastRowId, ordinal);
-                    }
-                }
-                int ordinal = ordinalsView.getOrdinalForRowId(Integer.MAX_VALUE);
-                assertEquals(-1, ordinal);
-            }
-
             boolean rowIdsMatchOrdinals = (boolean) FieldUtils.readField(odom, "rowIdsMatchOrdinals", true);
             odom.close();
             return rowIdsMatchOrdinals;
@@ -193,7 +163,7 @@ public class OnDiskOrdinalsMapTest
                                                            : x -> ordinalsMap.inverse().getOrDefault(x, x);
 
         long postingsOffset = writer.position();
-        long postingsPosition = new VectorPostingsWriter<Integer>(ordinalsMap != null, reverseOrdinalsMapper)
+        long postingsPosition = new VectorPostingsWriter<Integer>(canFastFindRows, reverseOrdinalsMapper)
                                     .writePostings(writer, vectorValues, postingsMap, deletedOrdinals);
         long postingsLength = postingsPosition - postingsOffset;
 
@@ -209,8 +179,43 @@ public class OnDiskOrdinalsMapTest
 
         public PostingsMetadata(long postingsOffset, long postingsLength)
         {
+<<<<<<< HEAD
+            OnDiskOrdinalsMap odom = new OnDiskOrdinalsMap(fileHandle, postingsOffset, postingsLength);
+
+            try (var ordinalsView = odom.getOrdinalsView())
+            {
+                int lastRowId = Integer.MAX_VALUE;
+                for (var p: postingsMap.entrySet())
+                {
+                    for (int rowId: p.getValue().getRowIds())
+                    {
+                        if (rowId - 1 > lastRowId)
+                        {
+                            // can repeat read of the last row
+                            int ordinal = ordinalsView.getOrdinalForRowId(lastRowId);
+                            assertEquals(lastRowId, ordinal);
+
+                            // check skipped row
+                            ordinal = ordinalsView.getOrdinalForRowId(lastRowId + 1);
+                            assertEquals(-1, ordinal);
+                        }
+
+                        lastRowId = rowId;
+                        int ordinal = ordinalsView.getOrdinalForRowId(rowId);
+                        assertEquals(lastRowId, ordinal);
+                    }
+                }
+                int ordinal = ordinalsView.getOrdinalForRowId(Integer.MAX_VALUE);
+                assertEquals(-1, ordinal);
+            }
+
+            boolean rowIdsMatchOrdinals = (boolean) FieldUtils.readField(odom, "rowIdsMatchOrdinals", true);
+            odom.close();
+            return rowIdsMatchOrdinals;
+=======
             this.postingsOffset = postingsOffset;
             this.postingsLength = postingsLength;
+>>>>>>> vsearch
         }
     }
 

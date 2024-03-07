@@ -253,12 +253,21 @@ public class OnDiskOrdinalsMap
         private int lastFoundRowId = -1;
         private long lastFoundRowIdIndex = -1;
 
+        private int lastRowId = -1;
+
         /**
          * @return order if given row id is found; otherwise return -1
+         * rowId must increase
          */
         @Override
         public int getOrdinalForRowId(int rowId) throws IOException
         {
+            if (rowId <= lastRowId)
+            {
+                throw new IllegalArgumentException("rowId " + rowId + " is less than or equal to lastRowId " + lastRowId);
+            }
+            lastRowId = rowId;
+
             assert rowId >= lastFoundRowId : "rowId < lastFoundRowId, rowId " + rowId + " lastFoundRowId " + lastFoundRowId + " lastFoundRowIdIndex " + lastFoundRowIdIndex + " high " + high;
 
             long low = 0;
