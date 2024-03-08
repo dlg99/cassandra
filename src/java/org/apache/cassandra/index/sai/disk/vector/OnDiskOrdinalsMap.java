@@ -205,7 +205,7 @@ public class OnDiskOrdinalsMap
     }
 
     /** Bits matching the given range, inclusively. */
-    private static class MatchRangeBits extends BitSet
+    public static class MatchRangeBits extends BitSet
     {
         final int lowerBound;
         final int upperBound;
