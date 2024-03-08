@@ -36,7 +36,6 @@ import org.apache.cassandra.index.sai.disk.v2.hnsw.DiskBinarySearch;
 import org.apache.cassandra.io.util.FileHandle;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import io.github.jbellis.jvector.util.Bits;
-import org.apache.cassandra.utils.Pair;
 
 public class OnDiskOrdinalsMap
 {
@@ -319,13 +318,12 @@ public class OnDiskOrdinalsMap
         }
 
         @Override
-        public Pair<Boolean, BitSet> buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> unused) throws IOException
+        public BitSet buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> unused) throws IOException
         {
             int start = Math.max(startRowId, 0);
             int end = Math.min(endRowId + 1, size);
 
-            var bits = new MatchRangeBits(start, end);
-            return Pair.create(bits.length() != 0, bits);
+            return new MatchRangeBits(start, end);
         }
 
         @Override
@@ -453,13 +451,13 @@ public class OnDiskOrdinalsMap
         }
 
         @Override
-        public Pair<Boolean, BitSet> buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> bitsetSupplier) throws IOException
+        public BitSet buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> bitsetSupplier) throws IOException
         {
             BitSet bits = bitsetSupplier.get();
-            boolean hasMatches = this.forEachOrdinalInRange(startRowId, endRowId, (segmentRowId, ordinal) -> {
+            this.forEachOrdinalInRange(startRowId, endRowId, (segmentRowId, ordinal) -> {
                 bits.set(ordinal);
             });
-            return Pair.create(hasMatches, bits);
+            return bits;
         }
 
         @Override

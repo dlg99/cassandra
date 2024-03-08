@@ -226,26 +226,27 @@ public class V2VectorIndexSearcher extends IndexSearcher implements SegmentOrder
             }
 
             // create a bitset of ordinals corresponding to the rows in the given key range
-            final Pair<Boolean, BitSet> matches;
+            final BitSet bits;
             try (var ordinalsView = graph.getOrdinalsView())
             {
                 int startSegmentRowId = metadata.toSegmentRowId(minSSTableRowId);
                 int endSegmentRowId = metadata.toSegmentRowId(maxSSTableRowId);
 
-                matches = ordinalsView.buildOrdinalBitSet(startSegmentRowId, endSegmentRowId, this::bitSetForSearch);
+                bits = ordinalsView.buildOrdinalBitSet(startSegmentRowId, endSegmentRowId, this::bitSetForSearch);
             }
             catch (IOException e)
             {
                 throw new RuntimeException(e);
             }
 
+            int cardinality = bits.cardinality();
             // We can make a more accurate cost estimate now
-            var betterCostEstimate = estimateCost(topK, matches.right.cardinality());
+            var betterCostEstimate = estimateCost(topK, cardinality);
 
-            if (!matches.left)
+            if (cardinality == 0)
                 return CloseableIterator.emptyIterator();
 
-            return graph.search(queryVector, topK, threshold, matches.right, context, visited -> {
+            return graph.search(queryVector, topK, threshold, bits, context, visited -> {
                 betterCostEstimate.updateStatistics(visited);
                 context.addAnnNodesVisited(visited);
             });

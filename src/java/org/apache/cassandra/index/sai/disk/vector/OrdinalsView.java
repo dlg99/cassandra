@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.util.function.Supplier;
 
 import io.github.jbellis.jvector.util.BitSet;
-import org.apache.cassandra.utils.Pair;
 
 public interface OrdinalsView extends AutoCloseable
 {
@@ -38,7 +37,7 @@ public interface OrdinalsView extends AutoCloseable
      * */
     boolean forEachOrdinalInRange(int startRowId, int endRowId, OrdinalConsumer consumer) throws IOException;
 
-    Pair<Boolean, BitSet> buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> bitsetSupplier) throws IOException;
+    BitSet buildOrdinalBitSet(int startRowId, int endRowId, Supplier<BitSet> bitsetSupplier) throws IOException;
 
     @Override
     void close();
