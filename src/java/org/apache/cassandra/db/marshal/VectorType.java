@@ -74,6 +74,7 @@ public final class VectorType<T> extends AbstractType<List<T>>
     }
 
     private static final boolean FLOAT_ONLY = Boolean.parseBoolean(System.getProperty("cassandra.float_only_vectors", "true"));
+    private static final boolean VECTOR_TYPE_ALLOWED = Boolean.parseBoolean(System.getProperty("cassandra.vector_type_allowed", "true"));
     private static final ConcurrentHashMap<Key, VectorType> instances = new ConcurrentHashMap<>();
 
     public final AbstractType<T> elementType;
@@ -85,6 +86,8 @@ public final class VectorType<T> extends AbstractType<List<T>>
     private VectorType(AbstractType<T> elementType, int dimension)
     {
         super(ComparisonType.CUSTOM);
+        if (!VECTOR_TYPE_ALLOWED)
+            throw new InvalidRequestException("vector type is not allowed");
         if (FLOAT_ONLY && !(elementType instanceof FloatType))
             throw new InvalidRequestException(String.format("vectors may only use float. given %s", elementType.asCQL3Type()));
         if (dimension <= 0)
